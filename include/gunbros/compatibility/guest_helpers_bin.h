@@ -2,16 +2,16 @@
  * @file guest_helpers_bin.h
  * @brief Precompiled ARM32 guest helper routines (including guest_qsort).
  *
- * PROCEDENCIA Y ESTADO:
- * Este archivo contiene un binario precompilado en código máquina ARM32 (460 bytes)
- * que se inyecta en la memoria del guest en GUEST_HELPERS_OFF (0x8000d000) para proveer
- * implementaciones de algoritmos que requieren ejecutarse en el espacio de direcciones
- * y convención de llamadas del guest (por ejemplo, qsort/heapsort con punteros de función guest).
+ * PROVENANCE AND STATUS:
+ * This file contains a precompiled ARM32 machine-code blob (460 bytes)
+ * that is injected into guest memory at GUEST_HELPERS_OFF (0x8000d000) to provide
+ * implementations of algorithms that must run in the guest's address space
+ * and calling convention (for example, qsort/heapsort with guest function pointers).
  *
- * NOTA: El código fuente en C o ensamblador de estas rutinas no se encuentra versionado
- * en el repositorio. De acuerdo con las reglas del proyecto, este blob no se reconstruye
- * ni se desensambla a ciegas; queda documentado aquí y en docs/compatibility.md, y marcado
- * como "Pendiente del autor" para proporcionar el archivo fuente original (.s / .c).
+ * NOTE: The C or assembly source for these routines is not versioned
+ * in the repository. Per the project rules, this blob is not rebuilt
+ * or blindly disassembled; it is documented here and in docs/compatibility.md, and marked
+ * as "Pending from the author" until the original source file (.s / .c) is provided.
  */
 
 #ifndef GUNBROS_GUEST_HELPERS_BIN_H

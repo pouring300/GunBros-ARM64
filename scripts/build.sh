@@ -4,12 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Cargar entorno y resolver dependencias desde .env
+# Load environment and resolve dependencies from .env
 source "$SCRIPT_DIR/common_env.sh"
 
 if [[ -z "$NDK" || ! -f "$NDK/build/cmake/android.toolchain.cmake" ]]; then
-    echo "ERROR: Android NDK no válido en '$NDK'." >&2
-    echo "Configura ANDROID_NDK_HOME en tu archivo .env o define la variable de entorno." >&2
+    echo "ERROR: Invalid Android NDK at '$NDK'." >&2
+    echo "Set ANDROID_NDK_HOME in your .env file or define the environment variable." >&2
     exit 1
 fi
 

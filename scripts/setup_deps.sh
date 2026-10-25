@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# GunBros ARM64 Bridge - Verificador e Instalador de Dependencias
+# GunBros ARM64 Bridge - Dependency Checker and Installer
 # ==============================================================================
-# Este script cumple una función similar a 'npm install' o 'pip install -r requirements.txt':
-# 1. Configura el archivo .env si no existe a partir de .env.example.
-# 2. Comprueba las dependencias del sistema (CMake, Ninja/Make, Compilador, Zip, ADB).
-# 3. Comprueba y valida el Android NDK y las Build-Tools de Android SDK.
-# 4. Comprueba las librerías precompiladas de Dynarmic y cabeceras de Boost.
-# 5. Genera automáticamente un keystore de depuración si no existe ninguno.
+# This script plays a role similar to 'npm install' or 'pip install -r requirements.txt':
+# 1. Creates the .env file from .env.example if it does not exist.
+# 2. Checks system dependencies (CMake, Ninja/Make, compiler, Zip, ADB).
+# 3. Checks and validates the Android NDK and the Android SDK Build-Tools.
+# 4. Checks the prebuilt Dynarmic libraries and the Boost headers.
+# 5. Automatically generates a debug keystore if none exists.
 # ==============================================================================
 set -euo pipefail
 
@@ -20,145 +20,145 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Si se pasa --download o --install, ejecutar el instalador primero
+# If --download or --install is passed, run the installer first
 if [[ "${1:-}" == "--download" || "${1:-}" == "--install" || "${1:-}" == "-i" ]]; then
     "$SCRIPT_DIR/download_deps.sh"
 fi
 
-echo -e "${BLUE}=== [GunBros Setup] Comprobando Dependencias del Proyecto ===${NC}"
+echo -e "${BLUE}=== [GunBros Setup] Checking Project Dependencies ===${NC}"
 
-# 1. Asegurar archivo .env
+# 1. Ensure .env file exists
 if [[ ! -f "$PROJECT_ROOT/.env" ]]; then
-    echo -e "${YELLOW}[!] No se encontró .env. Creando .env a partir de .env.example...${NC}"
+    echo -e "${YELLOW}[!] No .env found. Creating .env from .env.example...${NC}"
     cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env"
-    echo -e "${GREEN}[✓] Archivo .env generado exitosamente.${NC}"
+    echo -e "${GREEN}[✓] .env file created successfully.${NC}"
 else
-    echo -e "${GREEN}[✓] Archivo .env detectado.${NC}"
+    echo -e "${GREEN}[✓] .env file detected.${NC}"
 fi
 
-# Cargar entorno común
+# Load common environment
 source "$SCRIPT_DIR/common_env.sh"
 
 ALL_OK=true
 
-# 2. Comprobar herramientas básicas del sistema
+# 2. Check basic system tools
 check_tool() {
     local cmd="$1"
     local name="$2"
     if which "$cmd" >/dev/null 2>&1; then
         echo -e "  ${GREEN}[✓]${NC} $name ($cmd): $(which "$cmd")"
     else
-        echo -e "  ${RED}[✗]${NC} $name ($cmd) no encontrado en PATH."
+        echo -e "  ${RED}[✗]${NC} $name ($cmd) not found in PATH."
         ALL_OK=false
     fi
 }
 
-echo -e "\n${BLUE}1. Herramientas del Sistema Host:${NC}"
+echo -e "\n${BLUE}1. Host System Tools:${NC}"
 if which "$CMAKE_BIN" >/dev/null 2>&1 || [[ -x "$CMAKE_BIN" ]]; then
     echo -e "  ${GREEN}[✓]${NC} CMake: $CMAKE_BIN"
 else
-    echo -e "  ${RED}[✗]${NC} CMake ($CMAKE_BIN) no encontrado. Define CMAKE_BIN en .env."
+    echo -e "  ${RED}[✗]${NC} CMake ($CMAKE_BIN) not found. Set CMAKE_BIN in .env."
     ALL_OK=false
 fi
-check_tool "make" "Make (o Ninja)" || check_tool "ninja" "Ninja" || true
+check_tool "make" "Make (or Ninja)" || check_tool "ninja" "Ninja" || true
 check_tool "zip" "Zip"
 check_tool "unzip" "Unzip"
-check_tool "adb" "Android Debug Bridge (ADB)" || echo -e "      ${YELLOW}(Opcional para pruebas en host, requerido para deploy en dispositivo)${NC}"
+check_tool "adb" "Android Debug Bridge (ADB)" || echo -e "      ${YELLOW}(Optional for host tests, required for on-device deploy)${NC}"
 
-# 3. Comprobar compilador C/C++
-echo -e "\n${BLUE}2. Compilador C/C++ (para pruebas locales CTest):${NC}"
+# 3. Check C/C++ compiler
+echo -e "\n${BLUE}2. C/C++ Compiler (for local CTest tests):${NC}"
 if which clang >/dev/null 2>&1; then
     echo -e "  ${GREEN}[✓]${NC} Clang: $(clang --version | head -n 1)"
 elif which gcc >/dev/null 2>&1; then
     echo -e "  ${GREEN}[✓]${NC} GCC: $(gcc --version | head -n 1)"
 else
-    echo -e "  ${RED}[✗]${NC} No se detectó compilador C/C++ (instala clang o gcc)."
+    echo -e "  ${RED}[✗]${NC} No C/C++ compiler detected (install clang or gcc)."
     ALL_OK=false
 fi
 
-# 4. Comprobar Android NDK
-echo -e "\n${BLUE}3. Android NDK (para compilación ARM64):${NC}"
+# 4. Check Android NDK
+echo -e "\n${BLUE}3. Android NDK (for ARM64 builds):${NC}"
 if [[ -n "$NDK" && -f "$NDK/build/cmake/android.toolchain.cmake" ]]; then
-    echo -e "  ${GREEN}[✓]${NC} NDK válido detectado en: $NDK"
+    echo -e "  ${GREEN}[✓]${NC} Valid NDK detected at: $NDK"
 else
-    echo -e "  ${RED}[✗]${NC} NDK no encontrado en: '$NDK'"
-    echo -e "      ${YELLOW}Solución: Instala Android NDK (r23c a r26d) mediante Android Studio"
-    echo -e "      o descárgalo y define ANDROID_NDK_HOME en tu archivo .env.${NC}"
+    echo -e "  ${RED}[✗]${NC} NDK not found at: '$NDK'"
+    echo -e "      ${YELLOW}Fix: Install the Android NDK (r23c through r26d) via Android Studio"
+    echo -e "      or download it and set ANDROID_NDK_HOME in your .env file.${NC}"
     ALL_OK=false
 fi
 
-# 5. Comprobar Android Build Tools (zipalign, apksigner)
-echo -e "\n${BLUE}4. Android SDK Build-Tools (empaquetado y firma de APK):${NC}"
+# 5. Check Android Build Tools (zipalign, apksigner)
+echo -e "\n${BLUE}4. Android SDK Build-Tools (APK packaging and signing):${NC}"
 if which "$ZIPALIGN" >/dev/null 2>&1 || [[ -x "$ZIPALIGN" ]]; then
     echo -e "  ${GREEN}[✓]${NC} zipalign: $ZIPALIGN"
 else
-    echo -e "  ${RED}[✗]${NC} zipalign no encontrado. Define BUILD_TOOLS en tu archivo .env."
+    echo -e "  ${RED}[✗]${NC} zipalign not found. Set BUILD_TOOLS in your .env file."
     ALL_OK=false
 fi
 
 if which "$APKSIGNER" >/dev/null 2>&1 || [[ -x "$APKSIGNER" ]]; then
     echo -e "  ${GREEN}[✓]${NC} apksigner: $APKSIGNER"
 else
-    echo -e "  ${RED}[✗]${NC} apksigner no encontrado. Define BUILD_TOOLS en tu archivo .env."
+    echo -e "  ${RED}[✗]${NC} apksigner not found. Set BUILD_TOOLS in your .env file."
     ALL_OK=false
 fi
 
-# 6. Comprobar Keystore de depuración (o generarlo si falta)
-echo -e "\n${BLUE}5. Keystore de Depuración:${NC}"
+# 6. Check debug keystore (or generate it if missing)
+echo -e "\n${BLUE}5. Debug Keystore:${NC}"
 if [[ -f "$KEYSTORE" ]]; then
-    echo -e "  ${GREEN}[✓]${NC} Keystore existente: $KEYSTORE"
+    echo -e "  ${GREEN}[✓]${NC} Existing keystore: $KEYSTORE"
 else
-    echo -e "  ${YELLOW}[!] Keystore no encontrado en '$KEYSTORE'. Intentando generar uno nuevo...${NC}"
+    echo -e "  ${YELLOW}[!] Keystore not found at '$KEYSTORE'. Trying to generate a new one...${NC}"
     mkdir -p "$(dirname "$KEYSTORE")"
     if which keytool >/dev/null 2>&1; then
         keytool -genkey -v -keystore "$KEYSTORE" \
           -storepass android -alias androiddebugkey -keypass android \
           -keyalg RSA -keysize 2048 -validity 10000 \
           -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
-        echo -e "  ${GREEN}[✓]${NC} Keystore generado exitosamente en: $KEYSTORE"
+        echo -e "  ${GREEN}[✓]${NC} Keystore generated successfully at: $KEYSTORE"
     else
-        echo -e "  ${RED}[✗]${NC} keytool no encontrado. Instala OpenJDK/Java para generar el keystore."
+        echo -e "  ${RED}[✗]${NC} keytool not found. Install OpenJDK/Java to generate the keystore."
         ALL_OK=false
     fi
 fi
 
-# 7. Comprobar Dependencias de Emulación (Dynarmic y Boost)
-echo -e "\n${BLUE}6. Dependencias de Emulación (Dynarmic y Boost):${NC}"
+# 7. Check emulation dependencies (Dynarmic and Boost)
+echo -e "\n${BLUE}6. Emulation Dependencies (Dynarmic and Boost):${NC}"
 LIBDYNARMIC="$DYNARMIC_ROOT/build-arm64/src/dynarmic/libdynarmic.a"
 if [[ -f "$LIBDYNARMIC" ]]; then
-    echo -e "  ${GREEN}[✓]${NC} Biblioteca Dynarmic ARM64: $LIBDYNARMIC"
+    echo -e "  ${GREEN}[✓]${NC} Dynarmic ARM64 library: $LIBDYNARMIC"
 else
-    echo -e "  ${RED}[✗]${NC} libdynarmic.a no encontrada en $LIBDYNARMIC"
+    echo -e "  ${RED}[✗]${NC} libdynarmic.a not found at $LIBDYNARMIC"
     ALL_OK=false
 fi
 
 if [[ -f "$BOOST_ROOT/boost/version.hpp" || -f "$BOOST_ROOT/version.hpp" ]]; then
-    echo -e "  ${GREEN}[✓]${NC} Cabeceras de Boost: $BOOST_ROOT"
+    echo -e "  ${GREEN}[✓]${NC} Boost headers: $BOOST_ROOT"
 else
-    echo -e "  ${RED}[✗]${NC} Cabeceras de Boost no encontradas en $BOOST_ROOT"
+    echo -e "  ${RED}[✗]${NC} Boost headers not found at $BOOST_ROOT"
     ALL_OK=false
 fi
 
-# Resumen final
+# Final summary
 echo -e "\n${BLUE}==============================================================================${NC}"
 if [ "$ALL_OK" = true ]; then
-    echo -e "${GREEN}¡Excelente! Todas las dependencias están listas y verificadas.${NC}"
-    echo -e "Para compilar el proyecto y generar el APK:"
+    echo -e "${GREEN}Excellent! All dependencies are ready and verified.${NC}"
+    echo -e "To build the project and generate the APK:"
     echo -e "  ${YELLOW}./build.sh${NC}"
-    echo -e "Para ejecutar las pruebas en tu máquina:"
+    echo -e "To run the tests on your machine:"
     echo -e "  ${YELLOW}./scripts/run_tests.sh${NC}"
 else
-    echo -e "${YELLOW}Se detectaron dependencias faltantes.${NC}"
-    echo -e "Puedes descargarlas y configurarlas automáticamente ejecutando:"
+    echo -e "${YELLOW}Missing dependencies were detected.${NC}"
+    echo -e "You can download and set them up automatically by running:"
     echo -e "  ${YELLOW}./setup.sh --download${NC}"
     
-    # Si la sesión es interactiva, ofrecer descarga inmediata
+    # If the session is interactive, offer to download right away
     if [[ -t 0 ]]; then
         echo -e ""
-        read -r -p "¿Deseas descargar y compilar automáticamente las dependencias faltantes ahora? [s/N]: " REPLY || true
+        read -r -p "Download and build the missing dependencies automatically now? [y/N]: " REPLY || true
         if [[ "$REPLY" =~ ^[sSyY]$ ]]; then
             "$SCRIPT_DIR/download_deps.sh"
-            echo -e "\n${BLUE}Reverificando dependencias tras la instalación...${NC}"
+            echo -e "\n${BLUE}Re-checking dependencies after installation...${NC}"
             exec "$0" "$@"
         fi
     fi

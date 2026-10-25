@@ -2,13 +2,13 @@
  * @file test_host_io_persistence.c
  * @brief Host-side file I/O persistence and atomic rename test suite.
  *
- * NOTA DE DISEÑO (Fase 4.2):
- * Este test verifica la semántica de persistencia de E/S atómica en el host
- * (fopen/fwrite/fclose/rename) simulando dos procesos secuenciales independientes.
- * Utiliza una estructura sintética simplificada ('GunBrosSaveData') con fines de prueba unitaria,
- * NO el formato binario propietario del juego Gun Bros.
- * Para reproducir la secuencia exacta de llamadas guest sobre volcados de guardado reales,
- * véase tests/golden/golden_save_runner.c.
+ * DESIGN NOTE (Phase 4.2):
+ * This test checks the atomic I/O persistence semantics on the host
+ * (fopen/fwrite/fclose/rename) by simulating two independent sequential processes.
+ * It uses a simplified synthetic structure ('GunBrosSaveData') for unit-testing purposes,
+ * NOT the proprietary binary format of the Gun Bros game.
+ * To replay the exact sequence of guest calls against real save dumps,
+ * see tests/golden/golden_save_runner.c.
  */
 
 #include <stdio.h>

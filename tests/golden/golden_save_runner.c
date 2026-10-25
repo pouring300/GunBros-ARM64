@@ -3,9 +3,9 @@
  * @brief Test runner that reproduces the exact sequence of guest libc calls
  *        on real Gun Bros save files (savegame.dat, prefs.dat).
  *
- * En conformidad con la Regla 5 del proyecto, NO se incluyen volcados reales de guardado
- * en el repositorio. Si 'tests/golden/savegame.dat' no existe, el test explica cómo aportarlo
- * y finaliza satisfactoriamente.
+ * In line with project Rule 5, real save dumps are NOT included
+ * in the repository. If 'tests/golden/savegame.dat' does not exist, the test explains how to provide it
+ * and exits successfully.
  */
 
 #include <stdio.h>

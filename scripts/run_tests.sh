@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Cargar entorno y resolver dependencias desde .env
+# Load environment and resolve dependencies from .env
 source "$SCRIPT_DIR/common_env.sh"
 
 BUILD_DIR="$PROJECT_ROOT/build/host"

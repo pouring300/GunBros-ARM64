@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Cargar entorno y variables desde .env
+# Load environment and variables from .env
 source "$SCRIPT_DIR/common_env.sh"
 
 LOG_DIR="$PROJECT_ROOT/logs"

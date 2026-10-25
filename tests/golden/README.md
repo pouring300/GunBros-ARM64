@@ -1,51 +1,51 @@
 # Golden Save Tests
 
-Este directorio contiene el ejecutable de prueba `golden_save_runner` y la documentación para validar volcados de guardado reales de **Gun Bros** contra la capa HLE de archivos.
+This directory contains the `golden_save_runner` test executable and the documentation for validating real **Gun Bros** save dumps against the HLE file layer.
 
-## Política del Repositorio (Regla 5)
+## Repository Policy (Rule 5)
 
-En conformidad con las normas de propiedad intelectual del proyecto:
-- **NO se distribuyen ni suben al repositorio** volcados de guardado propietarios (`savegame.dat`, `prefs.dat`, `-1_1000..-1_1019`), assets ni código del juego.
-- Cuando no hay un archivo de guardado presente en este directorio, `golden_save_runner` se ejecuta en modo informativo y pasa con éxito.
+In accordance with the project's intellectual property rules:
+- Proprietary save dumps (`savegame.dat`, `prefs.dat`, `-1_1000..-1_1019`), game assets and game code are **NOT distributed or committed to the repository**.
+- When no save file is present in this directory, `golden_save_runner` runs in informational mode and passes.
 
-## Cómo Aportar un Guardado Real para Verificación
+## How to Contribute a Real Save for Verification
 
-Si dispones de un dispositivo Android o emulador ejecutando el juego original o el puente:
+If you have an Android device or emulator running the original game or the bridge:
 
-1. **Localizar los archivos de guardado en el dispositivo:**
+1. **Locate the save files on the device:**
    ```bash
    adb shell run-as com.glu.android.gunbros_free ls -l /data/data/com.glu.android.gunbros_free/files/
    ```
 
-2. **Extraer `savegame.dat` y `prefs.dat`:**
+2. **Extract `savegame.dat` and `prefs.dat`:**
    ```bash
    adb exec-out run-as com.glu.android.gunbros_free cat files/savegame.dat > tests/golden/savegame.dat
    adb exec-out run-as com.glu.android.gunbros_free cat files/prefs.dat > tests/golden/prefs.dat
    ```
 
-3. **Verificar sus hashes SHA-256:**
+3. **Check their SHA-256 hashes:**
    ```bash
    sha256sum tests/golden/savegame.dat tests/golden/prefs.dat
    ```
 
-4. **Ejecutar el runner:**
+4. **Run the runner:**
    ```bash
-   # Vía test suite completa:
+   # Via the full test suite:
    ./scripts/run_tests.sh
 
-   # O ejecutando el binario directamente con cualquier archivo:
+   # Or by running the binary directly with any file:
    ./build/host/golden_save_runner tests/golden/savegame.dat
    ./build/host/golden_save_runner tests/golden/prefs.dat
    ```
 
-## Secuencia Reproducida por el Runner
+## Sequence Reproduced by the Runner
 
-El runner replica exactamente las llamadas a libc/POSIX emitidas por el código ARM32 invitado:
-1. `h_stat`: Comprueba la existencia y obtiene el tamaño exacto con el layout de 104 bytes de bionic ARM32.
-2. `h_fopen`: Abre en modo lectura binaria (`"rb"`).
-3. `h_fseek`: Desplaza el cursor al final (`SEEK_END`) con offset 0.
-4. `h_ftell`: Verifica que la posición devuelta coincida exactamente con el tamaño obtenido por `stat`.
-5. `h_fseek`: Rebobina al inicio (`SEEK_SET`).
-6. `h_fread`: Lee el contenido en memoria del guest y genera un volcado hexadecimal de los primeros 64 bytes.
-7. `h_fclose`: Cierra el descriptor.
-8. Flujo de guardado seguro (`SafeWriteFile`): escribe en archivo temporal (`"wb"`), valida escritura y renombra atómicamente.
+The runner replicates exactly the libc/POSIX calls issued by the ARM32 guest code:
+1. `h_stat`: Checks that the file exists and gets its exact size using the 104-byte Bionic ARM32 layout.
+2. `h_fopen`: Opens it in binary read mode (`"rb"`).
+3. `h_fseek`: Moves the cursor to the end (`SEEK_END`) with offset 0.
+4. `h_ftell`: Checks that the returned position exactly matches the size obtained from `stat`.
+5. `h_fseek`: Rewinds to the start (`SEEK_SET`).
+6. `h_fread`: Reads the contents into guest memory and produces a hex dump of the first 64 bytes.
+7. `h_fclose`: Closes the descriptor.
+8. Safe save flow (`SafeWriteFile`): writes to a temporary file (`"wb"`), validates the write and renames it atomically.

@@ -1,98 +1,98 @@
-# Guía de Pruebas Automatizadas: GunBros ARM64 Bridge
+# Automated Testing Guide: GunBros ARM64 Bridge
 
-Este documento detalla la suite de pruebas unitarias y de integración que valida la robustez, el aislamiento y la seguridad de los diferentes subsistemas sin necesidad de disponer de un dispositivo Android físico.
-
----
-
-## 1. Filosofía de Pruebas
-
-Un principio fundamental de este proyecto es que **ninguna refactorización o cambio de código se considera correcto hasta haber sido verificado mediante pruebas automatizadas**.
-
-Las pruebas están diseñadas para:
-1. **Ejecutarse en el host**: Compilan y corren directamente en la máquina de desarrollo (Linux, macOS, WSL2) utilizando cualquier compilador moderno (GCC o Clang).
-2. **Aislar responsabilidades**: Prueban componentes individuales de forma independiente (sistema de archivos, memoria virtual, búferes de audio).
-3. **Simular ciclos de vida reales**: Incluyen pruebas multiproceso para certificar la persistencia de datos en almacenamiento ante cierres forzados de la aplicación.
+This document details the unit and integration test suite that validates the robustness, isolation and safety of the different subsystems without needing a physical Android device.
 
 ---
 
-## 2. Catálogo de Pruebas Disponibles
+## 1. Testing Philosophy
 
-La suite de pruebas consta de 5 ejecutables gestionados a través de **CTest**:
+A fundamental principle of this project is that **no refactoring or code change is considered correct until it has been verified by automated tests**.
+
+The tests are designed to:
+1. **Run on the host**: They compile and run directly on the development machine (Linux, macOS, WSL2) using any modern compiler (GCC or Clang).
+2. **Isolate responsibilities**: They test individual components independently (filesystem, virtual memory, audio buffers).
+3. **Simulate real lifecycles**: They include multi-process tests to certify data persistence in storage when the app is force-closed.
+
+---
+
+## 2. Catalog of Available Tests
+
+The test suite consists of 5 executables managed through **CTest**:
 
 ```
 +-------------------------------------------------------------------------------+
-|                            Suite de Pruebas CTest                             |
+|                                CTest Test Suite                               |
 +-------------------------------------------------------------------------------+
-  |-- test_path_mapper       : Normalización de rutas, esquemas Glu y reglas TOC
-  |-- test_file_operations   : Handles virtuales, autoflush, fseek, mkdir, rmdir
-  |-- test_persistence       : Persistencia atómica de guardado entre dos procesos
-  |-- test_pcm_ring          : Ring buffer de audio lock-free y cruce de límites
-  |-- test_guest_memory      : Asignación virtual, commpage y conversión de punteros
+  |-- test_path_mapper       : Path normalization, Glu schemes and TOC rules
+  |-- test_file_operations   : Virtual handles, autoflush, fseek, mkdir, rmdir
+  |-- test_persistence       : Atomic save persistence across two processes
+  |-- test_pcm_ring          : Lock-free audio ring buffer and wrap-around
+  |-- test_guest_memory      : Virtual allocation, commpage and pointer conversion
 ```
 
 ### 2.1. `test_path_mapper` (`tests/filesystem/test_path_mapper.c`)
-Valida el motor de resolución de rutas:
-- Comprueba que punteros nulos o cadenas vacías devuelvan rutas válidas y seguras por defecto.
-- Verifica la redirección automática de rutas relativas hacia el directorio privado de la aplicación.
-- Verifica la eliminación de esquemas virtuales de Glu (`data:`, `temp:`, `cache:`, `apk:`) tanto en solitario como cuando han sido concatenados con prefijos de directorio.
-- Comprueba la restitución del carácter `p` en archivos `ackTOC` (`ackTOC_*.dat` -> `packTOC_*.dat`).
-- Comprueba la resolución de respaldo de texturas WVGA a XGA cuando el asset original no existe.
+Validates the path resolution engine:
+- Checks that null pointers or empty strings return valid, safe default paths.
+- Verifies automatic redirection of relative paths to the app's private directory.
+- Verifies removal of Glu virtual schemes (`data:`, `temp:`, `cache:`, `apk:`) both on their own and when they have been concatenated with directory prefixes.
+- Checks restoration of the `p` character in `ackTOC` files (`ackTOC_*.dat` -> `packTOC_*.dat`).
+- Checks WVGA-to-XGA texture fallback resolution when the original asset does not exist.
 
 ### 2.2. `test_file_operations` (`tests/filesystem/test_file_operations.c`)
-Valida la tabla virtual de descriptores de archivo y las operaciones de entrada/salida:
-- Asigna descriptores seguros en el rango `1` al `64`, certificando que los descriptores `0`, `1` y `2` del sistema operativo no son alterados.
-- Verifica que las escrituras ejecuten `fflush()` inmediato.
-- Valida el posicionamiento con `fseek()` y lectura con `ftell()`.
-- Comprueba la guarda contra cierres dobles (*double-close safety*).
-- Valida la creación recursiva de subdirectorios mediante `gunbros_mkdir()`.
-- Verifica el ciclo de vida de directorios (`opendir`, `closedir`, `rmdir`).
+Validates the virtual file descriptor table and input/output operations:
+- Assigns safe descriptors in the range `1` to `64`, certifying that the operating system's descriptors `0`, `1` and `2` are not altered.
+- Verifies that writes perform an immediate `fflush()`.
+- Validates positioning with `fseek()` and reading with `ftell()`.
+- Checks the guard against double closes (*double-close safety*).
+- Validates recursive subdirectory creation via `gunbros_mkdir()`.
+- Verifies the directory lifecycle (`opendir`, `closedir`, `rmdir`).
 
 ### 2.3. `test_persistence` (`tests/filesystem/test_persistence.c`)
-Prueba de integración crítica que simula el ciclo de vida real de dos sesiones del juego:
-1. **Proceso 1 (Sesión de Juego)**:
-   - Abre un archivo `temp.dat` en modo escritura.
-   - Escribe una estructura simulada de guardado con monedas, estrellas y armas.
-   - Aplica `fflush()` y cierra el archivo.
-   - Elimina `savegame.dat` y renombra `temp.dat` a `savegame.dat`.
-   - El proceso termina de forma limpia.
-2. **Proceso 2 (Reinicio en Frío)**:
-   - Se inicia un nuevo proceso independiente desde la línea de comandos.
-   - Intenta abrir `savegame.dat` en modo lectura.
-   - Valida byte a byte la integridad de todos los campos de la estructura de datos.
+Critical integration test that simulates the real lifecycle of two game sessions:
+1. **Process 1 (Game Session)**:
+   - Opens a `temp.dat` file in write mode.
+   - Writes a simulated save structure with coins, stars and weapons.
+   - Calls `fflush()` and closes the file.
+   - Deletes `savegame.dat` and renames `temp.dat` to `savegame.dat`.
+   - The process exits cleanly.
+2. **Process 2 (Cold Restart)**:
+   - A new independent process is started from the command line.
+   - It tries to open `savegame.dat` in read mode.
+   - It validates the integrity of every field of the data structure byte by byte.
 
 ### 2.4. `test_pcm_ring` (`tests/platform/test_pcm_ring.c`)
-Valida el búfer circular lock-free SPSC de 64 KB para audio:
-- Escribe bloques de muestras de audio simuladas.
-- Verifica que la lectura devuelva exactamente los mismos bytes en orden estricto FIFO.
-- Prueba el cruce continuo del puntero por el límite del búfer (*ring wrap-around*).
+Validates the 64 KB lock-free SPSC ring buffer for audio:
+- Writes blocks of simulated audio samples.
+- Verifies that reading returns exactly the same bytes in strict FIFO order.
+- Tests the pointer continuously crossing the buffer boundary (*ring wrap-around*).
 
 ### 2.5. `test_guest_memory` (`tests/emulator/test_guest_memory.c`)
-Valida el mapa de memoria virtual del emulador:
-- Comprueba la asignación de memoria anónima (`mmap`) para los rangos de código, heap y pila.
-- Valida la conversión bidireccional entre direcciones invitadas de 32 bits y punteros reales del host de 64 bits.
-- Verifica la inicialización de los stubs del *commpage* (`__kuser_cmpxchg`) en `0xffff0fc0`.
+Validates the emulator's virtual memory map:
+- Checks anonymous memory allocation (`mmap`) for the code, heap and stack ranges.
+- Validates bidirectional conversion between 32-bit guest addresses and real 64-bit host pointers.
+- Verifies initialization of the *commpage* stubs (`__kuser_cmpxchg`) at `0xffff0fc0`.
 
 ---
 
-## 3. Cómo Ejecutar las Pruebas
+## 3. How to Run the Tests
 
-### 3.1. Mediante el Script Automatizado
-La forma más sencilla de compilar y correr todas las pruebas:
+### 3.1. Using the Automated Script
+The simplest way to build and run all the tests:
 ```bash
 ./scripts/run_tests.sh
 ```
 
-### 3.2. Mediante Comandos Manuales de CTest
+### 3.2. Using Manual CTest Commands
 ```bash
-# Compilar las pruebas
+# Build the tests
 cmake -B build/host -S . -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build build/host -j$(nproc)
 
-# Ejecutar la suite
+# Run the suite
 ctest --test-dir build/host --output-on-failure --verbose
 ```
 
-### Ejemplo de Salida Exitosa:
+### Example of Successful Output:
 ```text
 Test project .../build/host
     Start 1: test_path_mapper
@@ -112,11 +112,11 @@ Total Test time (real) = 0.04 sec
 
 ---
 
-## 4. Cómo Añadir Nuevas Pruebas
+## 4. How to Add New Tests
 
-Si desarrollas una nueva funcionalidad o deseas probar un parche específico:
+If you develop a new feature or want to test a specific patch:
 
-1. Crea tu archivo de prueba en el directorio apropiado dentro de `tests/`, por ejemplo:
+1. Create your test file in the appropriate directory under `tests/`, for example:
    ```c
    // tests/compatibility/test_my_feature.c
    #include <assert.h>
@@ -130,11 +130,11 @@ Si desarrollas una nueva funcionalidad o deseas probar un parche específico:
    }
    ```
 
-2. Registra el nuevo ejecutable en `CMakeLists.txt` dentro del bloque `if(BUILD_TESTING)`:
+2. Register the new executable in `CMakeLists.txt` inside the `if(BUILD_TESTING)` block:
    ```cmake
    add_executable(test_my_feature tests/compatibility/test_my_feature.c)
    target_link_libraries(test_my_feature PRIVATE gunbros_common)
    add_test(NAME test_my_feature COMMAND test_my_feature)
    ```
 
-3. Vuelve a ejecutar `./scripts/run_tests.sh` para verificar que tu prueba se compile y pase automáticamente junto con las demás.
+3. Run `./scripts/run_tests.sh` again to verify that your test builds and passes automatically along with the others.

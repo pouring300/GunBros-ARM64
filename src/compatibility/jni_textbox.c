@@ -10,8 +10,8 @@
 typedef struct {
     bool in_use;
     uint32_t handle;       // GUEST_TEXTBOX_BASE + i * 0x100
-    jobject real_obj;      // GlobalRef a GluTextBox en Java
-    char text_buf[256];    // Buffer de texto UTF-8 devuelto al guest
+    jobject real_obj;      // GlobalRef to the Java GluTextBox
+    char text_buf[256];    // UTF-8 text buffer returned to the guest
     int last_x, last_y, last_w, last_h;
     bool is_visible;
     bool is_masked;
@@ -42,7 +42,7 @@ static jclass get_glu_textbox_class(JNIEnv *env) {
     jclass act_cls = (*env)->GetObjectClass(env, cb);
     if (!act_cls) return NULL;
 
-    // Usar el ClassLoader de la Activity para asegurar resolución en DexClassLoader
+    // Use the Activity's ClassLoader to ensure resolution through DexClassLoader
     jmethodID get_cl_mid = (*env)->GetMethodID(env, act_cls, "getClassLoader", "()Ljava/lang/ClassLoader;");
     if (get_cl_mid) {
         jobject cl_obj = (*env)->CallObjectMethod(env, cb, get_cl_mid);
@@ -63,7 +63,7 @@ static jclass get_glu_textbox_class(JNIEnv *env) {
         }
     }
 
-    // Fallback a FindClass
+    // Fall back to FindClass
     jclass direct_cls = (*env)->FindClass(env, "com/glu/platform/android/GluTextBox");
     if (direct_cls) {
         s_glu_textbox_class = (jclass)(*env)->NewGlobalRef(env, direct_cls);
@@ -109,7 +109,7 @@ uint32_t jni_textbox_create(void) {
     s_textboxes[slot].is_visible = false;
     s_textboxes[slot].is_masked = false;
 
-    // Inicializar la memoria guest en 'handle'
+    // Initialize guest memory at 'handle'
     uint8_t *guest_slot = (uint8_t*)guest_to_host(handle);
     if (guest_slot) {
         memset(guest_slot, 0, 0x100);
@@ -228,7 +228,7 @@ bool jni_method_textbox_set_bounds(const jni_call_context_t *ctx) {
     }
     pthread_mutex_unlock(&s_textbox_mutex);
 
-    // Devolvemos handle (!= 0) para que C++ marque el campo como inicializado (r4 + 0x1c)
+    // Return the handle (!= 0) so the C++ side marks the field as initialized (r4 + 0x1c)
     *ctx->r0 = handle;
     return true;
 }
@@ -353,7 +353,7 @@ bool jni_method_textbox_get_text(const jni_call_context_t *ctx) {
             }
         }
 
-        // Escribir el buffer de texto en la memoria guest (handle + 0x40)
+        // Write the text buffer into guest memory (handle + 0x40)
         uint8_t *guest_buf = (uint8_t*)guest_to_host(handle + 0x40);
         if (guest_buf) {
             size_t len = strlen(s_textboxes[slot].text_buf);
@@ -361,7 +361,7 @@ bool jni_method_textbox_get_text(const jni_call_context_t *ctx) {
         }
 
         LOGI("[GluTextBox:GetText] handle=0x%x -> '%s'", handle, s_textboxes[slot].text_buf);
-        // Devolvemos el handle del jstring guest: handle + 0x40
+        // Return the guest jstring handle: handle + 0x40
         *ctx->r0 = handle + 0x40;
     } else {
         *ctx->r0 = GUEST_EMPTY_STRING;

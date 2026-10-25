@@ -1,148 +1,148 @@
-# Sistema de Archivos y Persistencia: GunBros ARM64 Bridge
+# Filesystem and Persistence: GunBros ARM64 Bridge
 
-## 1. El Reto del Almacenamiento en Android Moderno
+## 1. The Storage Challenge on Modern Android
 
-En la época de Android 2.x a 4.x, las aplicaciones tenían acceso de lectura y escritura prácticamente irrestricto sobre la memoria externa (`/sdcard/` o `/mnt/sdcard/`) y las rutas internas (`/data/data/<package>/`). El motor de GunBros fue programado asumiendo estas rutas fijas.
+In the Android 2.x to 4.x era, apps had practically unrestricted read and write access to external storage (`/sdcard/` or `/mnt/sdcard/`) and internal paths (`/data/data/<package>/`). The GunBros engine was programmed assuming these fixed paths.
 
-A partir de Android 10 y de forma estricta en Android 11 a 16, el sistema operativo implementa **Scoped Storage** y políticas estrictas de **SELinux**:
-- Las aplicaciones no pueden crear ni modificar archivos arbitrarios en la raíz de `/sdcard/`.
-- Cualquier intento de acceder directamente a rutas obsoletas sin pasar por la capa de compatibilidad resulta en denegación de permisos (`EACCES`) o ruta no encontrada (`ENOENT`).
-- Los procesos en segundo plano son congelados de forma agresiva por el sistema operativo (*Cached App Freezer*), lo que descarta cualquier búfer de memoria de usuario (`stdio`) que no se haya volcado explícitamente a disco mediante llamadas del sistema.
+Starting with Android 10, and strictly in Android 11 through 16, the operating system enforces **Scoped Storage** and strict **SELinux** policies:
+- Apps cannot create or modify arbitrary files in the root of `/sdcard/`.
+- Any attempt to directly access obsolete paths without going through the compatibility layer results in permission denied (`EACCES`) or path not found (`ENOENT`).
+- Background processes are aggressively frozen by the operating system (*Cached App Freezer*), which discards any user-space memory buffer (`stdio`) that has not been explicitly flushed to disk via system calls.
 
-Para resolver esto sin modificar el código fuente original del juego, el subsistema de sistema de archivos (`src/filesystem/`) emula una capa POSIX completa con redirección transparente de rutas.
+To solve this without modifying the game's original source code, the filesystem subsystem (`src/filesystem/`) emulates a complete POSIX layer with transparent path redirection.
 
 ---
 
-## 2. Normalización y Mapeo de Rutas (`path_mapper`)
+## 2. Path Normalization and Mapping (`path_mapper`)
 
-Todas las llamadas de entrada que involucran rutas de archivos (`fopen`, `stat`, `remove`, `rename`, `mkdir`, `opendir`, `rmdir`) son procesadas por la función `path_mapper_normalize()`.
+All input calls involving file paths (`fopen`, `stat`, `remove`, `rename`, `mkdir`, `opendir`, `rmdir`) are processed by the `path_mapper_normalize()` function.
 
-### Reglas de Transformación Aplicadas
+### Transformation Rules Applied
 
-1. **Redirección a Almacenamiento Privado de la Aplicación**:
-   Cualquier ruta que haga referencia a `/sdcard/glu/gunbros/`, `/data/data/com.glu.android.gunbros_free/files/` o nombres de archivo relativos se redirige al directorio de archivos privado de la aplicación:
+1. **Redirection to the App's Private Storage**:
+   Any path referring to `/sdcard/glu/gunbros/`, `/data/data/com.glu.android.gunbros_free/files/` or relative file names is redirected to the app's private files directory:
    ```
    /sdcard/glu/gunbros/savegame.dat -> <APP_EXTERNAL_FILES_DIR>/files/savegame.dat
    ```
-   Si el almacenamiento externo no está disponible, se utiliza como respaldo el directorio interno (`<APP_INTERNAL_FILES_DIR>/files/`).
+   If external storage is not available, the internal directory (`<APP_INTERNAL_FILES_DIR>/files/`) is used as a fallback.
 
-2. **Detección y Eliminación de Esquemas Virtuales de Glu**:
-   El motor de Glu Mobile utiliza esquemas de protocolo virtual para referirse a diferentes ubicaciones:
-   - `data:` -> Directorio de datos del juego.
-   - `temp:` -> Directorio de archivos temporales.
-   - `cache:` -> Caché del motor.
-   - `apk:` -> Archivos empaquetados en el APK.
+2. **Detection and Removal of Glu Virtual Schemes**:
+   The Glu Mobile engine uses virtual protocol schemes to refer to different locations:
+   - `data:` -> Game data directory.
+   - `temp:` -> Temporary files directory.
+   - `cache:` -> Engine cache.
+   - `apk:` -> Files packaged in the APK.
 
-   En el código C++ del juego, las cadenas de ruta a menudo se concatenan con el directorio base antes de llamar a funciones del sistema operativo, resultando en rutas híbridas como:
+   In the game's C++ code, path strings are often concatenated with the base directory before calling operating system functions, resulting in hybrid paths such as:
    ```
    <APP_DIR>/files/data:/prefs.dat
    <APP_DIR>/files/temp:/temp.dat
    ```
-   El núcleo de Linux interpretaría `data:` como una subcarpeta que no existe en el sistema de archivos, provocando un fallo `ENOENT` (Error 2: No such file or directory).
-   El normalizador detecta la presencia de estos esquemas y extrae el nombre de archivo real, asegurando que la ruta apunte directamente a:
+   The Linux kernel would interpret `data:` as a subfolder that does not exist on the filesystem, causing an `ENOENT` failure (Error 2: No such file or directory).
+   The normalizer detects the presence of these schemes and extracts the real file name, ensuring the path points directly to:
    ```
    <APP_DIR>/files/prefs.dat
    ```
 
-3. **Corrección de Prefijo en Archivos de Recursos (`ackTOC`)**:
-   En el motor de Glu, un fallo histórico de manipulación de cadenas recortaba el primer carácter de los archivos de tabla de contenidos de paquetes (`packTOC_*.dat`). Si el juego solicita un archivo cuyo nombre comienza con `ackTOC`, el normalizador le antepone automáticamente la letra `p` faltante (`packTOC`), permitiendo la carga fluida de texturas y sonidos.
+3. **Prefix Correction for Resource Files (`ackTOC`)**:
+   In the Glu engine, a long-standing string manipulation bug truncated the first character of package table-of-contents files (`packTOC_*.dat`). If the game requests a file whose name starts with `ackTOC`, the normalizer automatically prepends the missing letter `p` (`packTOC`), allowing textures and sounds to load smoothly.
 
-4. **Sustitución Automática de Resolución (WVGA a XGA)**:
-   Si el juego solicita un atlas de texturas para resolución WVGA (`_wvga.png`) que no está presente en los datos instalados, el mapeador comprueba la existencia de la variante en alta definición XGA (`_xga.png`) y redirige la apertura sin que el motor falle.
+4. **Automatic Resolution Substitution (WVGA to XGA)**:
+   If the game requests a texture atlas for WVGA resolution (`_wvga.png`) that is not present in the installed data, the mapper checks for the existence of the high-definition XGA variant (`_xga.png`) and redirects the open without the engine failing.
 
 ---
 
-## 3. Mecánica del Guardado Atómico en GunBros
+## 3. Atomic Save Mechanics in GunBros
 
-Mediante ingeniería inversa y desensamblado de la biblioteca `libandroidplatform.so`, se identificó la rutina de persistencia principal en las funciones `CSaveGameMgr::Write`, `COptionsMgr::Write` y `CFileUtil::SafeWriteApplicationSaveGameFile`.
+Through reverse engineering and disassembly of the `libandroidplatform.so` library, the main persistence routine was identified in the functions `CSaveGameMgr::Write`, `COptionsMgr::Write` and `CFileUtil::SafeWriteApplicationSaveGameFile`.
 
-El juego emplea un patrón de escritura atómica para evitar que un fallo de energía o cierre inesperado corrompa los archivos originales:
+The game uses an atomic write pattern to prevent a power failure or unexpected shutdown from corrupting the original files:
 
 ```
-[Paso 1] fopen("temp.dat", "wb")
+[Step 1] fopen("temp.dat", "wb")
                |
                v
-[Paso 2] fwrite(datos_actualizados) -> fflush() -> fclose()
+[Step 2] fwrite(updated_data) -> fflush() -> fclose()
                |
                v
-[Paso 3] remove("data:/savegame.dat")    (o prefs.dat)
+[Step 3] remove("data:/savegame.dat")    (or prefs.dat)
                |
                v
-[Paso 4] rename("temp.dat", "data:/savegame.dat")
+[Step 4] rename("temp.dat", "data:/savegame.dat")
 ```
 
-Si en el Paso 3 o 4 la ruta no estuviera normalizada o los permisos fallaran, el archivo `temp.dat` quedaría huérfano y el archivo definitivo `savegame.dat` sería eliminado o no se actualizaría.
+If in Step 3 or 4 the path were not normalized or permissions failed, the `temp.dat` file would be left orphaned and the final `savegame.dat` file would be deleted or not updated.
 
 ---
 
-## 4. Tabla Virtual de Descriptores (`file_handles`)
+## 4. Virtual Descriptor Table (`file_handles`)
 
-El código emulado de 32 bits espera trabajar con identificadores numéricos de archivo o punteros `FILE*`. Devolver punteros nativos directos o descriptores de archivo crudos del sistema operativo anfitrión puede provocar graves fallos si el código invitado realiza operaciones indebidas o asume valores de 32 bits.
+The emulated 32-bit code expects to work with numeric file identifiers or `FILE*` pointers. Returning direct native pointers or raw file descriptors from the host operating system can cause serious failures if the guest code performs improper operations or assumes 32-bit values.
 
-La capa de archivos implementa una **tabla virtual de descriptores**:
-- Asigna identificadores enteros del `1` al `64` (`GUNBROS_MAX_OPEN_FILES`).
-- Cada ranura almacena el puntero nativo `FILE*`, el modo de apertura (`"rb"`, `"wb"`, etc.), la ruta original y la ruta normalizada.
-- Las ranuras `0` (stdin), `1` (stdout) y `2` (stderr) del host quedan completamente protegidas; ninguna operación del juego puede cerrar ni sobreescribir las salidas estándar del sistema.
-- Se implementan guardas de seguridad contra cierres dobles (*double-close protection*).
-
----
-
-## 5. Vaciado Forzado a Disco (`file_operations`)
-
-La biblioteca estándar de C (`stdio`) utiliza búferes en memoria de usuario para optimizar las escrituras. Sin embargo, en dispositivos móviles, el usuario puede cambiar de aplicación o cerrar el juego mediante el menú de aplicaciones recientes en cualquier momento.
-
-Para evitar la pérdida de bloques que aún no han sido enviados físicamente al almacenamiento flash:
-1. `gunbros_fwrite()` invoca automáticamente `fflush()` tras cada operación de escritura.
-2. `gunbros_fclose()` realiza un `fflush()` final antes de invocar `fclose()` en el sistema operativo anfitrión.
+The file layer implements a **virtual descriptor table**:
+- It assigns integer identifiers from `1` to `64` (`GUNBROS_MAX_OPEN_FILES`).
+- Each slot stores the native `FILE*` pointer, the open mode (`"rb"`, `"wb"`, etc.), the original path and the normalized path.
+- The host's slots `0` (stdin), `1` (stdout) and `2` (stderr) are fully protected; no game operation can close or overwrite the system's standard outputs.
+- Safety guards against double closes are implemented (*double-close protection*).
 
 ---
 
-## 6. Estado Actual de la Persistencia del Progreso
+## 5. Forced Flush to Disk (`file_operations`)
 
-### Lo que Funciona Correctamente
-- Las operaciones a nivel de sistema operativo y kernel (`fopen`, `fwrite`, `fflush`, `remove`, `rename`) están completamente verificadas y funcionan sin errores en dispositivos reales con Android moderno.
-- Los archivos de configuración (`prefs.dat`), archivos temporales y los contenedores de perfiles de usuario (`-1_1000` a `-1_1019`, `-1_PDST`) se crean, escriben y renombran atómicamente en la carpeta de la aplicación con confirmación de éxito:
+The C standard library (`stdio`) uses user-space memory buffers to optimize writes. However, on mobile devices, the user can switch apps or close the game from the recent apps menu at any time.
+
+To avoid losing blocks that have not yet been physically sent to flash storage:
+1. `gunbros_fwrite()` automatically invokes `fflush()` after every write operation.
+2. `gunbros_fclose()` performs a final `fflush()` before invoking `fclose()` on the host operating system.
+
+---
+
+## 6. Current State of Progress Persistence
+
+### What Works Correctly
+- Operating system and kernel level operations (`fopen`, `fwrite`, `fflush`, `remove`, `rename`) are fully verified and work without errors on real devices running modern Android.
+- Configuration files (`prefs.dat`), temporary files and user profile containers (`-1_1000` to `-1_1019`, `-1_PDST`) are created, written and atomically renamed in the app folder with success confirmation:
   ```
   [FS:rename] SUCCESS '/storage/.../files/temp.dat' -> '/storage/.../files/prefs.dat'
   [FS:fopen] SUCCESS slot=1 mode='wb' path='/storage/.../files/-1_1000'
   ```
-- La suite de pruebas de persistencia entre procesos independientes (`tests/filesystem/test_persistence.c`) supera el 100% de las verificaciones.
+- The cross-process persistence test suite (`tests/filesystem/test_persistence.c`) passes 100% of its checks.
 
-### Problema Pendiente a Investigar (Lógica Interna del Juego)
-A pesar de que los archivos se guardan físicamente en el almacenamiento del dispositivo, al reiniciar la aplicación por completo, el motor del juego reinicia el progreso visible del jugador (monedas, armas compradas y nivel de campaña vuelven a los valores por defecto).
+### Open Issue to Investigate (Internal Game Logic)
+Even though the files are physically saved to device storage, when the app is fully restarted, the game engine resets the player's visible progress (coins, purchased weapons and campaign level revert to their default values).
 
-### Hipótesis Técnicas para Colaboradores e Investigadores
+### Technical Hypotheses for Contributors and Researchers
 
-Si deseas contribuir a solucionar la persistencia del progreso, estas son las áreas clave identificadas durante la ingeniería inversa:
+If you want to help fix progress persistence, these are the key areas identified during reverse engineering:
 
-1. **Dependencia de la Identidad del Dispositivo / Cifrado de Guardado**:
-   - Muchos títulos de Glu Mobile de esta generación derivaban una clave de cifrado XOR o AES para `savegame.dat` a partir de datos del dispositivo devueltos por llamadas JNI:
+1. **Device Identity Dependency / Save Encryption**:
+   - Many Glu Mobile titles of this generation derived an XOR or AES encryption key for `savegame.dat` from device data returned by JNI calls:
      - `TelephonyManager.getDeviceId()` (IMEI)
      - `WifiInfo.getMacAddress()`
      - `Settings.Secure.ANDROID_ID`
-   - En nuestra capa de emulación (`jni_virtual_machine.c`), estos valores devuelven respuestas sintéticas predefinidas. Si el valor devuelto no es consistente o si el motor detecta un cambio en algún parámetro de la máquina, considera que la partida pertenece a otro dispositivo y la descarta.
+   - In our emulation layer (`jni_virtual_machine.c`), these values return predefined synthetic responses. If the returned value is not consistent, or if the engine detects a change in some machine parameter, it considers the save to belong to another device and discards it.
 
-2. **Detección de Archivo No Válido y Reinicio Forzado en `CSaveGameMgr::Read`**:
-   - En la dirección virtual `0x00252b90` se encuentra la rutina de lectura del archivo de guardado.
-   - Si la lectura falla, si el tamaño del archivo no coincide con el encabezado esperado, o si el checksum interno no concuerda, el motor bifurca inmediatamente a `0x00252cc4`, donde ejecuta:
-     1. `CSaveGameMgr::Reset()` (borra todos los valores en memoria).
-     2. `CSaveGameMgr::Write()` (sobrescribe el archivo en disco con la partida reiniciada).
-   - Se recomienda desensamblar y colocar puntos de registro (*trace logging*) en `0x00252b90` a `0x00252cf0` para observar exactamente qué condición provoca la bifurcación al reinicio.
+2. **Invalid File Detection and Forced Reset in `CSaveGameMgr::Read`**:
+   - The save file read routine is located at virtual address `0x00252b90`.
+   - If the read fails, if the file size does not match the expected header, or if the internal checksum does not match, the engine immediately branches to `0x00252cc4`, where it executes:
+     1. `CSaveGameMgr::Reset()` (clears all in-memory values).
+     2. `CSaveGameMgr::Write()` (overwrites the file on disk with the reset save).
+   - It is recommended to disassemble and place logging points (*trace logging*) at `0x00252b90` through `0x00252cf0` to observe exactly which condition triggers the branch to the reset.
 
-3. **Verificación de Metadatos de Archivo (`stat`)**:
-   - El juego realiza llamadas a `stat` para verificar la fecha de modificación (`st_mtime`) o el tamaño de `savegame.dat`. Asegurar que los campos de la estructura `stat` de 32 bits devueltos por `hle_dispatcher.c` coincidan exactamente con la estructura de Bionic de Android 2.x.
+3. **File Metadata Verification (`stat`)**:
+   - The game calls `stat` to check the modification time (`st_mtime`) or the size of `savegame.dat`. Ensure that the fields of the 32-bit `stat` structure returned by `hle_dispatcher.c` exactly match the Android 2.x Bionic structure.
 
 ---
 
-## 7. Diagnóstico y Auditoría en Tiempo Real
+## 7. Real-Time Diagnostics and Auditing
 
-Todas las operaciones del sistema de archivos emiten registros detallados en Logcat bajo la etiqueta `GunBrosFS` (y los eventos generales del emulador bajo `GunBrosARM64`):
+All filesystem operations emit detailed logs to Logcat under the `GunBrosFS` tag (and general emulator events under `GunBrosARM64`):
 
 ```bash
 adb logcat -s GunBrosFS GunBrosARM64
 ```
 
-Ejemplo de salida de auditoría durante la ejecución:
+Example audit output during execution:
 ```text
 I GunBrosFS: [FS:fopen] SUCCESS slot=1 mode='wb' path='/storage/.../files/temp.dat' (orig='data:/temp.dat')
 I GunBrosFS: [FS:fwrite] slot=1 req=1024 got=1024 errno=0

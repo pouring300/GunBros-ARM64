@@ -1,48 +1,48 @@
 # GunBros ARM64 Bridge
 
-Un puente de compatibilidad y emulación en tiempo real (JIT) de alto rendimiento que permite ejecutar el clásico juego de acción en 3D **GunBros** (desarrollado originalmente por Glu Mobile para arquitecturas ARM de 32 bits / `armeabi-v7a`) en dispositivos Android modernos que solo admiten aplicaciones de 64 bits (Android 14, 15 y 16 / procesadores ARMv9).
+A high-performance real-time (JIT) compatibility and emulation bridge that makes it possible to run the classic 3D action game **GunBros** (originally developed by Glu Mobile for 32-bit ARM architectures / `armeabi-v7a`) on modern Android devices that only support 64-bit applications (Android 14, 15 and 16 / ARMv9 processors).
 
 > [!IMPORTANT]
-> **Aviso de Propiedad Intelectual**: Este repositorio **NO incluye ni distribuye el archivo APK, assets gráficos/sonoros ni el código original del juego Gun Bros** (propiedad de Glu Mobile / EA). El usuario debe aportar su propia copia legítima del APK original para generar la plantilla base con `scripts/make_base_apk.sh`.
+> **Intellectual Property Notice**: This repository **does NOT include or distribute the APK file, graphics/audio assets, or the original code of the game Gun Bros** (property of Glu Mobile / EA). Users must supply their own legitimate copy of the original APK to generate the base template with `scripts/make_base_apk.sh`.
 
 ---
 
-**GunBros ARM64 Bridge** permite ejecutar el juego de Gun Bros en teléfonos con versiones actuales de Android de 64 bits combinando:
-- **Dynarmic**: Recompilación dinámica JIT de código ARM32 a ARM64 en tiempo real a 60 FPS estables.
-- **Capa HLE Modular**: Intercepción y despacho de llamadas al sistema (Bionic libc, libm, libz, POSIX y OpenGL ES 1.1 CM) dividida en módulos temáticos (`src/hle/`).
-- **Parches en Caliente Controlados**: Tabla declarativa de parches binarios con verificación opcional de opcodes previos y captura bajo `BRIDGE_DEBUG` para eludir servidores antiguos cerrados (Glu y GameSpy) y adaptar la orientación de armas y esqueleto.
-- **Persistencia Robusta**: Capa de sistema de archivos compatible con Bionic ARM32, E/S de 32 bits con signo y trazado de diagnósticos.
+**GunBros ARM64 Bridge** lets you run Gun Bros on phones with current 64-bit Android versions by combining:
+- **Dynarmic**: Real-time JIT dynamic recompilation of ARM32 code to ARM64 at a stable 60 FPS.
+- **Modular HLE Layer**: Interception and dispatch of system calls (Bionic libc, libm, libz, POSIX and OpenGL ES 1.1 CM), split into thematic modules (`src/hle/`).
+- **Controlled Hot Patches**: A declarative table of binary patches with optional verification of original opcodes and capture under `BRIDGE_DEBUG`, used to bypass old shut-down servers (Glu and GameSpy) and fix weapon and skeleton orientation.
+- **Robust Persistence**: A filesystem layer compatible with Bionic ARM32, signed 32-bit I/O and diagnostic tracing.
 
 ---
 
-## Arquitectura del Repositorio
+## Repository Architecture
 
-El proyecto se encuentra estrictamente desacoplado por responsabilidades:
+The project is strictly decoupled by responsibility:
 
 ```text
 gunbros/
-├── CMakeLists.txt                # Configuración CMake unificada (Android NDK & Host Testing)
-├── build.sh                      # Script rápido de compilación y empaquetado del APK
-├── LICENSE                       # Términos de licencia y avisos de derechos de autor
+├── CMakeLists.txt                # Unified CMake configuration (Android NDK & host testing)
+├── build.sh                      # Quick script to build and package the APK
+├── LICENSE                       # License terms and copyright notices
 │
-├── docs/                         # Documentación técnica completa y guías
-│   ├── architecture.md           # Diagrama de subsistemas, memoria virtual y concurrencia
-│   ├── build-guide.md            # Guía de compilación host, make_base_apk y cross-compile NDK
-│   ├── compatibility.md          # Parches binarios (A-J), HLE y máquina virtual JNI sintética
-│   ├── filesystem.md             # Mecánica de I/O, esquemas virtuales Glu y layout stat Bionic
-│   ├── save-debugging.md         # Protocolo de diagnóstico paso a paso de persistencia
-│   ├── debugging.md              # Depuración con Logcat, watchdog y volcado de registros
-│   └── testing.md                # Metodología de pruebas y catálogo de suites CTest
+├── docs/                         # Full technical documentation and guides
+│   ├── architecture.md           # Subsystem diagram, virtual memory and concurrency
+│   ├── build-guide.md            # Host build guide, make_base_apk and NDK cross-compile
+│   ├── compatibility.md          # Binary patches (A-J), HLE and synthetic JNI virtual machine
+│   ├── filesystem.md             # I/O mechanics, Glu virtual schemes and Bionic stat layout
+│   ├── save-debugging.md         # Step-by-step save persistence diagnostic protocol
+│   ├── debugging.md              # Debugging with Logcat, watchdog and register dumps
+│   └── testing.md                # Testing methodology and CTest suite catalog
 │
-├── include/gunbros/              # Interfaces públicas C/C++ tipadas y modulares
-│   ├── bridge/                   # Ciclo de vida, render loop y exportaciones JNI
-│   ├── emulator/                 # Dynarmic JIT backend, memoria virtual, ELF loader, dispatcher
-│   ├── hle/                      # Declaraciones públicas de manejadores libc HLE
-│   ├── filesystem/               # Mapeo de rutas, handles virtuales, I/O con autoflush
-│   ├── platform/                 # AAudio stream, EGL window, letterboxing y ring buffer PCM
-│   └── compatibility/            # Parches binarios, hooks de juego, símbolos guest y JVM sintética
+├── include/gunbros/              # Typed, modular public C/C++ interfaces
+│   ├── bridge/                   # Lifecycle, render loop and JNI exports
+│   ├── emulator/                 # Dynarmic JIT backend, virtual memory, ELF loader, dispatcher
+│   ├── hle/                      # Public declarations of libc HLE handlers
+│   ├── filesystem/               # Path mapping, virtual handles, I/O with autoflush
+│   ├── platform/                 # AAudio stream, EGL window, letterboxing and PCM ring buffer
+│   └── compatibility/            # Binary patches, game hooks, guest symbols and synthetic JVM
 │
-├── src/                          # Implementaciones de cada subsistema (C99 & C++20)
+├── src/                          # Implementation of each subsystem (C99 & C++20)
 │   ├── bridge/                   # bridge_core.c, jni_exports.c
 │   ├── emulator/                 # dynarmic_backend.cpp, elf_loader.c, guest_memory.c
 │   ├── hle/                      # libc_string.c, libc_time.c, libc_stdio.c, net_stubs.c, gles1.c, hle_table.c
@@ -50,91 +50,91 @@ gunbros/
 │   ├── platform/                 # android_window.c, android_audio.c, pcm_ring.c, jni_env_helper.c
 │   └── compatibility/            # game_patches.c, game_hooks.c, jni_virtual_machine.c, jni_methods.c, jni_audio.c
 │
-├── tests/                        # Pruebas automatizadas en host (100% pass rate en CTest)
+├── tests/                        # Automated host tests (100% CTest pass rate)
 │   ├── filesystem/               # test_path_mapper, test_file_operations, test_host_io_persistence
 │   ├── platform/                 # test_pcm_ring
 │   ├── emulator/                 # test_guest_memory
-│   ├── test_hle_libc.c           # Pruebas de fseek negativo, time 4 bytes, stat bionic y sscanf
-│   └── golden/                   # golden_save_runner.c y documentación de volcados reales
+│   ├── test_hle_libc.c           # Tests for negative fseek, 4-byte time, Bionic stat and sscanf
+│   └── golden/                   # golden_save_runner.c and documentation of real save dumps
 │
-├── scripts/                      # Scripts portables de automatización y CI
-│   ├── make_base_apk.sh          # Generación de base_template.apk desde el APK original
-│   ├── build.sh                  # Compilación cruzada con Android NDK (genera build/android/)
-│   ├── package.sh                # Inyección de so en APK, zipalign y firma con apksigner
-│   ├── deploy.sh                 # Instalación en dispositivo físico/emulador vía ADB
-│   ├── run_tests.sh              # Compilación y ejecución de CTest en host con aislamiento
-│   └── collect-logs.sh           # Captura continua y filtrada de logs (GunBrosARM64, GunBrosFS)
+├── scripts/                      # Portable automation and CI scripts
+│   ├── make_base_apk.sh          # Generates base_template.apk from the original APK
+│   ├── build.sh                  # Cross-compiles with the Android NDK (outputs build/android/)
+│   ├── package.sh                # Injects the .so into the APK, zipalign and apksigner signing
+│   ├── deploy.sh                 # Installs on a physical device/emulator via ADB
+│   ├── run_tests.sh              # Builds and runs CTest on the host in isolation
+│   └── collect-logs.sh           # Continuous, filtered log capture (GunBrosARM64, GunBrosFS)
 ```
 
-> **Nota de archivo**: El código histórico previo ha sido purgado del árbol de trabajo y se conserva íntegramente en la etiqueta Git `legacy-archive`.
+> **Archive note**: The previous historical code has been purged from the working tree and is preserved in full under the Git tag `legacy-archive`.
 
 ---
 
-## Inicio Rápido
+## Quick Start
 
-### 1. Configurar Entorno y Dependencias
-Verifica las herramientas de tu sistema y descarga/configura dependencias faltantes automáticamente:
+### 1. Set Up the Environment and Dependencies
+Check your system's tools and automatically download/configure missing dependencies:
 ```bash
 ./setup.sh
-# O para descarga automática desatendida de NDK, Build-Tools, Boost y Dynarmic:
+# Or, for unattended automatic download of the NDK, Build-Tools, Boost and Dynarmic:
 ./setup.sh --download
 ```
 
-### 2. Generar la Plantilla Base (`base_template.apk`)
-Aporta tu copia legítima del APK original de Gun Bros v1.1.9 (ARM32):
+### 2. Generate the Base Template (`base_template.apk`)
+Supply your legitimate copy of the original Gun Bros v1.1.9 APK (ARM32):
 ```bash
-./scripts/make_base_apk.sh /ruta/al/GunBros_original.apk
+./scripts/make_base_apk.sh /path/to/GunBros_original.apk
 ```
 
-### 3. Compilar el APK Completo para Android
-Compila la biblioteca nativa en `build/android/libandroidplatformjni.so`, la inyecta en el APK base, realiza la alineación de 4 bytes (`zipalign`) y la firma criptográfica:
+### 3. Build the Complete Android APK
+Compiles the native library to `build/android/libandroidplatformjni.so`, injects it into the base APK, performs 4-byte alignment (`zipalign`) and cryptographic signing:
 ```bash
 ./build.sh
 ```
-El archivo final generado es: `GunBros_Android16_Dynarmic.apk`.
+The final generated file is: `GunBros_Android16_Dynarmic.apk`.
 
-### 4. Ejecutar la Suite de Pruebas Automatizadas (Host)
-Compila y ejecuta las 7 suites de prueba mediante **CTest** en tu ordenador (sin requerir teléfono Android):
+### 4. Run the Automated Test Suite (Host)
+Builds and runs the 7 test suites through **CTest** on your computer (no Android phone required):
 ```bash
 ./scripts/run_tests.sh
 ```
 
-### 5. Instalar y Ejecutar en tu Dispositivo Android
-Conecta tu dispositivo Android mediante USB con depuración ADB activa:
+### 5. Install and Run on Your Android Device
+Connect your Android device over USB with ADB debugging enabled:
 ```bash
 ./scripts/deploy.sh
 ```
-*Nota*: El script aplica automáticamente el flag `--bypass-low-target-sdk-block` requerido por Android 14, 15 y 16 para aplicaciones con target SDK heredado.
+*Note*: The script automatically applies the `--bypass-low-target-sdk-block` flag required by Android 14, 15 and 16 for applications with a legacy target SDK.
 
-### 6. Ver Registros y Diagnóstico en Vivo
+### 6. View Logs and Live Diagnostics
 ```bash
 ./scripts/collect-logs.sh
 ```
 
 ---
 
-## Estado del Sistema de Archivos y Persistencia
+## Filesystem and Persistence Status
 
-Tras la auditoría y corrección en la revisión de octubre de 2026, se corrigieron los siguientes defectos críticos en la capa HLE de archivos y memoria:
+Following the audit and fixes in the October 2026 review, the following critical defects in the HLE file and memory layer were fixed:
 
-1. **Corrección de signo en `h_fseek`**: Se corrigió el casteo que transformaba offsets negativos del guest (utilizados habitualmente con `SEEK_END` o `SEEK_CUR`) en enteros positivos de 64 bits (~4 GB), provocando lecturas vacías posteriores.
-2. **Aislamiento de ancho en `h_time`**: Se corrigió la escritura de `time_t` de 64 bits del host que desbordaba sobre la memoria contigua del guest de 32 bits. Ahora se escribe estrictamente un `uint32_t`.
-3. **Layout de `struct stat` idéntico a Bionic ARM32**: Se implementó el mapeo exacto de 104 bytes de Bionic (`st_ino@12`, `st_mode@16`, `st_nlink@20`, `st_uid@24`, `st_gid@28`, `st_size@48` [8 bytes], `st_blksize@56`, `st_blocks@64` [8 bytes], `st_atime@72`, `st_mtime@80`, `st_ctime@88`), evitando desalineaciones con `memcpy`.
-4. **Normalización de anchos en `h_sscanf`**: Se normalizan los especificadores `%ld`/`%lu`/`%lx` a tipos de 4 bytes para evitar que el `sscanf` del host de 64 bits sobrescriba enteros adyacentes del guest, y se soportan argumentos ilimitados sobre la pila.
-5. **Stubs informativos**: Se eliminó el fallo silencioso de funciones no implementadas (`fprintf`, `fdopen`, `mkstemp`, `close`, `dup`, `ioctl`, `puts`), advirtiendo en el log con el valor de `LR` del guest y alertando si flujos distintos de `stdout`/`stderr` sufren escrituras perdidas.
-6. **Trazado de guardado en `BRIDGE_DEBUG`**: Se trazan todas las aperturas, lecturas, desplazamientos y cierres de archivos de guardado (`savegame.dat`, `prefs.dat`, etc.), volcando un volcado hexadecimal de los primeros 64 bytes al cerrarse archivos en modo escritura.
-7. **Protocolo de diagnóstico**: Para comprobar si una sesión de juego conserva el progreso o es reiniciada por la lógica interna, sigue el protocolo detallado en [docs/save-debugging.md](docs/save-debugging.md).
+1. **Sign fix in `h_fseek`**: Fixed the cast that turned negative guest offsets (commonly used with `SEEK_END` or `SEEK_CUR`) into positive 64-bit integers (~4 GB), which caused subsequent reads to come back empty.
+2. **Width isolation in `h_time`**: Fixed the write of the host's 64-bit `time_t`, which overflowed into adjacent 32-bit guest memory. Now exactly one `uint32_t` is written.
+3. **`struct stat` layout identical to Bionic ARM32**: Implemented the exact 104-byte Bionic mapping (`st_ino@12`, `st_mode@16`, `st_nlink@20`, `st_uid@24`, `st_gid@28`, `st_size@48` [8 bytes], `st_blksize@56`, `st_blocks@64` [8 bytes], `st_atime@72`, `st_mtime@80`, `st_ctime@88`), avoiding misalignments with `memcpy`.
+4. **Width normalization in `h_sscanf`**: The `%ld`/`%lu`/`%lx` specifiers are normalized to 4-byte types so that the 64-bit host `sscanf` does not overwrite adjacent guest integers, and an unlimited number of stack arguments is supported.
+5. **Informative stubs**: Removed the silent failure of unimplemented functions (`fprintf`, `fdopen`, `mkstemp`, `close`, `dup`, `ioctl`, `puts`); they now log a warning with the guest's `LR` value and alert if streams other than `stdout`/`stderr` suffer lost writes.
+6. **Save tracing under `BRIDGE_DEBUG`**: All opens, reads, seeks and closes of save files (`savegame.dat`, `prefs.dat`, etc.) are traced, and a hex dump of the first 64 bytes is emitted when files opened in write mode are closed.
+7. **Diagnostic protocol**: To check whether a game session keeps its progress or is reset by the internal logic, follow the protocol detailed in [docs/save-debugging.md](docs/save-debugging.md).
 
 ---
 
-## Índice de Documentación Técnica
+## Technical Documentation Index
 
-Para comprender a fondo cada aspecto del proyecto, consulta las guías dedicadas en la carpeta `docs/`:
+For an in-depth understanding of each aspect of the project, see the dedicated guides in the `docs/` folder:
 
-1. [**Arquitectura del Sistema** (`docs/architecture.md`)](docs/architecture.md): Diagrama de subsistemas, modularización HLE, mapa de memoria virtual y modelo de sincronización multihilo.
-2. [**Sistema de Archivos y Persistencia** (`docs/filesystem.md`)](docs/filesystem.md): Scoped Storage, esquemas virtuales Glu (`data:`, `temp:`), guardado atómico y layout `stat` Bionic ARM32.
-3. [**Protocolo de Diagnóstico de Guardado** (`docs/save-debugging.md`)](docs/save-debugging.md): Protocolo paso a paso para diagnosticar lecturas, sobrescrituras y hexdumps entre sesiones.
-4. [**Capa de Compatibilidad y HLE** (`docs/compatibility.md`)](docs/compatibility.md): Parches binarios tabla-driven, hooks de personajes, JVM sintética y métodos JNI desacoplados.
-5. [**Guía de Compilación** (`docs/build-guide.md`)](docs/build-guide.md): Requisitos previos, generación de `base_template.apk`, compilación NDK y empaquetado.
-6. [**Guía de Pruebas** (`docs/testing.md`)](docs/testing.md): Metodología de pruebas unitarias, suite de pruebas HLE libc y runner de guardados reales.
-7. [**Guía de Depuración** (`docs/debugging.md`)](docs/debugging.md): Etiquetas unificadas de Logcat (`GunBrosARM64`, `GunBrosFS`), volcado del Watchdog y solución de problemas.
+1. [**System Architecture** (`docs/architecture.md`)](docs/architecture.md): Subsystem diagram, HLE modularization, virtual memory map and multithreaded synchronization model.
+2. [**Filesystem and Persistence** (`docs/filesystem.md`)](docs/filesystem.md): Scoped Storage, Glu virtual schemes (`data:`, `temp:`), atomic saving and Bionic ARM32 `stat` layout.
+3. [**Save Diagnostic Protocol** (`docs/save-debugging.md`)](docs/save-debugging.md): Step-by-step protocol for diagnosing reads, overwrites and hexdumps across sessions.
+4. [**Compatibility and HLE Layer** (`docs/compatibility.md`)](docs/compatibility.md): Table-driven binary patches, character hooks, synthetic JVM and decoupled JNI methods.
+5. [**Build Guide** (`docs/build-guide.md`)](docs/build-guide.md): Prerequisites, generating `base_template.apk`, NDK build and packaging.
+6. [**Testing Guide** (`docs/testing.md`)](docs/testing.md): Unit testing methodology, HLE libc test suite and real-save runner.
+7. [**Debugging Guide** (`docs/debugging.md`)](docs/debugging.md): Unified Logcat tags (`GunBrosARM64`, `GunBrosFS`), Watchdog dump and troubleshooting.

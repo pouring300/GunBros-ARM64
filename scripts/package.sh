@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Cargar entorno y resolver dependencias desde .env
+# Load environment and resolve dependencies from .env
 source "$SCRIPT_DIR/common_env.sh"
 
 SO_FILE="${1:-$PROJECT_ROOT/build/android/libandroidplatformjni.so}"
@@ -25,14 +25,14 @@ fi
 
 if [[ ! -f "$BASE_APK" ]]; then
     echo "ERROR: Base template APK not found at $BASE_APK" >&2
-    echo "De acuerdo con las reglas de higiene y derechos de autor, el APK base no se incluye en el repositorio." >&2
-    echo "Para generarlo a partir del APK original de Gun Bros, ejecuta:" >&2
-    echo "  ./scripts/make_base_apk.sh /ruta/al/GunBros_original.apk" >&2
+    echo "Per the repository hygiene and copyright rules, the base APK is not included in the repository." >&2
+    echo "To generate it from the original Gun Bros APK, run:" >&2
+    echo "  ./scripts/make_base_apk.sh /path/to/GunBros_original.apk" >&2
     exit 1
 fi
 
 if [[ ! -f "$KEYSTORE" ]]; then
-    echo "ERROR: Keystore not found at $KEYSTORE. Ejecuta ./setup.sh para generarlo automáticamente." >&2
+    echo "ERROR: Keystore not found at $KEYSTORE. Run ./setup.sh to generate it automatically." >&2
     exit 1
 fi
 
