@@ -81,7 +81,12 @@ static void h_glClearStencil(hle_t *c)      { glClearStencil(c->r0); }
 static void h_glStencilMask(hle_t *c)       { glStencilMask(c->r0); }
 static void h_glGetIntegerv(hle_t *c) {
     GLint *p = (GLint*)guest_to_host(c->r1);
-    if (p) glGetIntegerv(c->r0, p);
+    if (!p) return;
+    glGetIntegerv(c->r0, p);
+    // The guest keeps the max texture size as an unsigned short, so GPUs reporting
+    // 65536 (e.g. Mali) wrap to 0 and CRenderSurface_OGLES_Texture::
+    // InitializeTextureObjects divides by zero on every texture upload.
+    if (c->r0 == GL_MAX_TEXTURE_SIZE && *p > 2048) *p = 2048;
 }
 static void h_glGetError(hle_t *c)          { c->r0 = glGetError(); }
 static void h_glGetString(hle_t *c) {
