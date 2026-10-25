@@ -200,7 +200,7 @@ During analysis of the actual code, the following discrepancies with the previou
 
 ---
 
-## 3. Items Pending from the Author ("Pending from the Author")
+## 3. Pending from the Author
 
 The following items have been technically prepared but require direct contribution or a decision from the project author:
 

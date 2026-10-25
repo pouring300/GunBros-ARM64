@@ -1,24 +1,24 @@
-LICENCIA / LICENSE
+LICENSE
 
-[PENDIENTE DE ELECCIÓN POR EL AUTOR DEL PROYECTO / PENDING AUTHOR SELECTION]
+[PENDING AUTHOR SELECTION]
 
-El código fuente propio de este proyecto (capa de puente, emulación HLE de libc/GLES,
-cargador ELF, subsistema de archivos y parches en memoria) está pendiente de definición
-formal de licencia por parte del autor (por ejemplo: MIT, Apache-2.0, o GPL-2.0 / GPL-3.0
-en consonancia con las bibliotecas utilizadas, como Dynarmic).
+This project's own source code (bridge layer, libc/GLES HLE emulation, ELF loader,
+filesystem subsystem and in-memory patches) does not yet have a formal license chosen
+by the author (for example: MIT, Apache-2.0, or GPL-2.0 / GPL-3.0 in line with the
+libraries used, such as Dynarmic).
 
-Para más detalles, consúltese la sección "Pendiente del autor" en docs/REVIEW_CHANGES.md.
+For more details, see the "Pending from the Author" section in docs/REVIEW_CHANGES.md.
 
 --------------------------------------------------------------------------------
 
-AVISO LEGAL Y DE DERECHOS DE AUTOR / LEGAL NOTICE & DISCLAIMER
+LEGAL NOTICE & DISCLAIMER
 
-Este proyecto es una capa de emulación y compatibilidad técnica independiente, desarrollada
-con fines educativos, de interoperabilidad técnica y preservación de software.
+This project is an independent technical emulation and compatibility layer, developed
+for educational, technical interoperability and software preservation purposes.
 
-- "Gun Bros" es una marca registrada y propiedad intelectual de Glu Mobile / Electronic Arts Inc.
-- Este repositorio NO contiene, NO distribuye, NO aloja ni proporciona el archivo APK original,
-  assets del juego (texturas, modelos 3D, pistas de audio, efectos sonoros) ni código fuente
-  descompilado del juego Gun Bros.
-- El usuario final debe suministrar su propia copia legítima del archivo APK original de Gun Bros
-  para generar la plantilla base mediante 'scripts/make_base_apk.sh' y ejecutar el software.
+- "Gun Bros" is a registered trademark and the intellectual property of Glu Mobile / Electronic Arts Inc.
+- This repository does NOT contain, distribute, host or provide the original APK file,
+  game assets (textures, 3D models, music tracks, sound effects) or decompiled source code
+  of the game Gun Bros.
+- End users must supply their own legitimate copy of the original Gun Bros APK file
+  to generate the base template with 'scripts/make_base_apk.sh' and run the software.
