@@ -216,8 +216,26 @@ void game_hooks_auto_register(void) {
     call_dialog_handler(GUEST_FN_NGS_REGISTER_SUBMITTED, "ngs_register", user, pass, email);
 }
 
+/* Resuming a saved session (CNGSLocalUser::AttemptToContinueSession) waits on the session's
+   network-time check, which never reports back once the time is already valid (the bridge
+   seeds it). The local user is then left with a request outstanding for good, and the game
+   only polls for messages (Bro-Ops) while it has none (CNGS::HandleUpdate). A while after
+   sign-in, close it the game's own way; CompleteReadRequestOutstanding never goes below zero. */
+static void settle_local_user(uint32_t profile) {
+    uint32_t pending = 0;
+    guest_mem_read(profile + GUEST_OFF_SERVER_OBJECT_PENDING, &pending, 4);
+    if (pending == 0) return;
+    LOGI("[NGS] closing %u stale request(s) left by sign-in", pending);
+    for (uint32_t i = 0; i < pending && i < 4; i++) {
+        prepare_call_arm(profile);
+        run_guest(GUEST_FN_SERVER_OBJECT_COMPLETE_READ, "ngs_settle");
+    }
+}
+
 void game_hooks_ngs_profile_online(void) {
-    static int s_done = 0;
+    static int s_done = 0, s_settle_frames = 0;
+    static uint32_t s_profile = 0;
+    if (s_settle_frames > 0 && --s_settle_frames == 0) settle_local_user(s_profile);
     if (s_done) return;
     if (!ngs_config_enabled()) { s_done = 1; return; }
 
@@ -234,6 +252,8 @@ void game_hooks_ngs_profile_online(void) {
     /* CProfileManager::LoginInitResourceLoaderCallback sets this flag at startup when the account
        is already signed in; ours signs in later, so set it the same way once it is. */
     s_done = 1;
+    s_profile = profile;
+    s_settle_frames = 600;  /* ~10 s */
 
     /* The save files are the only copy of the player's progress; the server only keeps what
        friends see. Data stores waiting to be reloaded from the server (status 4) would never be

@@ -98,6 +98,43 @@ class Accounts:
             self._save()
             return other, None
 
+    def post_message(self, sender, recipient_id, msg_type, text, duration):
+        """Queue a message for a friend. Returns False if the recipient isn't one."""
+        with self.lock:
+            if recipient_id not in sender.get('friends', []):
+                return False
+            inbox = [m for m in self.data.setdefault('messages', []) if m['recipientid'] == recipient_id]
+            if len(inbox) >= MAX_PENDING_MESSAGES:
+                return False
+            self.data['next_message_id'] = self.data.get('next_message_id', 1) + 1
+            now = int(time.time())
+            self.data['messages'].append({
+                'id': self.data['next_message_id'] - 1, 'senderid': sender['id'],
+                'senderGamertag': sender['gamertag'], 'recipientid': recipient_id, 'type': msg_type,
+                'message': text, 'expires': now + max(60, min(duration, MAX_MESSAGE_DURATION))})
+            self._save()
+            return True
+
+    def inbox(self, user):
+        """Unexpired messages for `user`, dropping expired ones."""
+        with self.lock:
+            now = int(time.time())
+            messages = self.data.setdefault('messages', [])
+            live = [m for m in messages if m['expires'] > now]
+            if len(live) != len(messages):
+                self.data['messages'] = live
+                self._save()
+            return [{k: v for k, v in m.items() if k != 'expires'}
+                    for m in live if m['recipientid'] == user['id']]
+
+    def ack_messages(self, user, ids):
+        with self.lock:
+            messages = self.data.setdefault('messages', [])
+            keep = [m for m in messages if not (m['recipientid'] == user['id'] and m['id'] in ids)]
+            if len(keep) != len(messages):
+                self.data['messages'] = keep
+                self._save()
+
     def friends_of(self, user):
         with self.lock:
             return [u for u in self.data['users'].values() if u['id'] in user.get('friends', [])]
@@ -264,9 +301,51 @@ def friend_search(message):
     return {'list': [credentials(f) for f in friends] if friends else {}}
 
 
+# Messages between friends (resources/message/*). Bro-Ops uses them: recruiting a Bro posts
+# {"challenge", "progress", "timeRange"} (type 1005) to them, and their game replies the same way.
+# The server only relays them between friends; it doesn't read them.
+MAX_PENDING_MESSAGES = 100        # per recipient
+MAX_MESSAGE_DURATION = 7 * 86400  # seconds
+MAX_MESSAGE_TEXT = 2048
+
+
+def message_caller(message):
+    """The signed-in player making a resources/message/* request (by session id)."""
+    return ACCOUNTS.by_session(message.get('header', {}).get('sessionid'))
+
+
+@endpoint('/gbro/resources/message/post')
+def message_post(message):
+    # CNGSFromServerMessageQ::PostEnvelopes: {"messages": [{recipientid, duration, type, pushok,
+    # message (a string of JSON)}], "user": {...}}. The reply is only checked for errors.
+    sender = message_caller(message)
+    if sender is None:
+        return error(1, 'not signed in')
+    for m in message.get('messages', []):
+        text, recipient = m.get('message'), m.get('recipientid')
+        if not isinstance(text, str) or len(text) > MAX_MESSAGE_TEXT or not isinstance(recipient, int):
+            continue
+        ACCOUNTS.post_message(sender, recipient, int(m.get('type', 0)), text, int(m.get('duration', 86400)))
+    return {'list': {}}
+
+
 @endpoint('/gbro/resources/message/poll')
 def message_poll(message):
-    # Inbox check ({"user": {"id": N}}), sent after login. No messaging yet: nothing new.
+    # CNGSFromServerMessageQ::CheckForEnvelopesFromServer, every 15 s: "list" is an array of
+    # envelopes {id, type, message, senderid, recipientid, senderGamertag} ({} when empty). The
+    # game acks the ones it has handled; the rest are delivered again until they expire.
+    user = message_caller(message)
+    envelopes = ACCOUNTS.inbox(user) if user else []
+    return {'list': envelopes if envelopes else {}}
+
+
+@endpoint('/gbro/resources/message/ack')
+def message_ack(message):
+    # {"messages": [{"id": N}, ...]}: delivered and handled, so delete them.
+    user = message_caller(message)
+    if user:
+        ids = {m.get('id') for m in message.get('messages', []) if isinstance(m, dict)}
+        ACCOUNTS.ack_messages(user, ids)
     return {'list': {}}
 
 

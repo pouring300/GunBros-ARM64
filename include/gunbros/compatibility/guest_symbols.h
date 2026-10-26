@@ -227,6 +227,7 @@
 #define GUEST_OFF_GB_FRIEND_DATA_MGR         0x34u        /* GunBros -> CFriendDataManager* */
 #define GUEST_OFF_FRIEND_MGR_FETCH_LIST      0xb4u        /* CFriendDataManager -> friends being fetched (CNGSRemoteUserList*) */
 #define GUEST_OFF_SERVER_OBJECT_PENDING      0x08u        /* CNGSServerObject: outstanding requests (isReady when 0) */
+#define GUEST_FN_SERVER_OBJECT_COMPLETE_READ 0x00424e54u  /* CNGSServerObject::CompleteReadRequestOutstanding() */
 #define GUEST_FN_NGS_UPDATE_FRIEND_LIST      0x00411e28u  /* CNGSLocalUser::UpdateFriendListFromServer() */
 #define GUEST_FN_SHOW_SEARCH_POPUP           0x002606f8u  /* CAndroidSearchPopup::ShowAndroidSearchPopup(title, a, b, c, d) */
 #define GUEST_FN_SEARCH_POPUP_REFRESH        0x00260b98u  /* CAndroidSearchPopup::RefreshMidMenuPopup(popup, MenuAction) */
