@@ -40,6 +40,8 @@ def endpoint(path):
 class Accounts:
     """Glu accounts, persisted to a JSON file. Passwords are stored as salted SHA-256."""
 
+    CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'  # no 0/O, 1/I/L look-alikes
+
     def __init__(self, path):
         self.path = path
         self.lock = threading.Lock()
@@ -48,6 +50,48 @@ class Accounts:
                 self.data = json.load(f)
         except (OSError, ValueError):
             self.data = {'next_id': 1000, 'users': {}}
+        with self.lock:
+            for user in self.data['users'].values():
+                user.setdefault('code', self._new_code())
+                user.setdefault('friends', [])
+            self._save()
+
+    def _new_code(self):
+        taken = {u.get('code') for u in self.data['users'].values()}
+        while True:
+            raw = ''.join(secrets.choice(self.CODE_ALPHABET) for _ in range(8))
+            code = raw[:4] + '-' + raw[4:]
+            if code not in taken:
+                return code
+
+    @staticmethod
+    def normalize_code(code):
+        raw = ''.join(c for c in (code or '').upper() if c.isalnum())
+        return raw[:4] + '-' + raw[4:] if len(raw) == 8 else None
+
+    def by_id(self, user_id):
+        with self.lock:
+            return next((u for u in self.data['users'].values() if u['id'] == user_id), None)
+
+    def befriend(self, user, code):
+        """Make the owner of `code` and `user` friends. Returns (friend, error)."""
+        code = self.normalize_code(code)
+        with self.lock:
+            other = next((u for u in self.data['users'].values() if u.get('code') == code), None) if code else None
+            if other is None:
+                return None, 'Code not found.'
+            if other['id'] == user['id']:
+                return None, "That's your own code."
+            if other['id'] in user['friends']:
+                return other, None
+            user['friends'].append(other['id'])
+            other['friends'].append(user['id'])
+            self._save()
+            return other, None
+
+    def friends_of(self, user):
+        with self.lock:
+            return [u for u in self.data['users'].values() if u['id'] in user.get('friends', [])]
 
     def _save(self):
         tmp = self.path + '.tmp'
@@ -68,7 +112,8 @@ class Accounts:
             salt = secrets.token_hex(8)
             self.data['users'][gamertag.lower()] = {
                 'id': uid, 'gamertag': gamertag, 'email': email,
-                'salt': salt, 'password': self._hash(password, salt), 'created': int(time.time())}
+                'salt': salt, 'password': self._hash(password, salt), 'created': int(time.time()),
+                'code': self._new_code(), 'friends': []}
             self._save()
             return self.data['users'][gamertag.lower()]
 
@@ -113,7 +158,8 @@ class Accounts:
 def credentials(user):
     # Fields read by CNGSUserCredentials::InitFromObjectRepresentation.
     return {'id': user['id'], 'clientid': user['id'], 'gamertag': user['gamertag'],
-            'nickname': user['gamertag'], 'email': user['email'], 'avatarid': 0,
+            # avatarid > 0: CNGSUserCredentials::hasValidAvatar, required for friends-list entries
+            'nickname': user['gamertag'], 'email': user['email'], 'avatarid': user['id'],
             'socialnetworkname': 'glu', 'socialnetworkid': user['email'],
             'gluid': user['email'], 'gluAlias': user['gamertag']}
 
@@ -187,10 +233,13 @@ def update_attributes(message):
 
 @endpoint('/gbro/resources/friend/search')
 def friend_search(message):
-    # CNGSLocalUser::UpdateFriendListFromServer: {"brother": {"brother": {"email": "@"}, "status": 1,
-    # "items": 1024, ...}} loads the friends ("brothers") list. No friends system yet: empty list.
-    # (A 404 here sends the game down an error path that jumps to a bad address.)
-    return {'list': {}}
+    # CNGSLocalUser::UpdateFriendListFromServer -> HandleValidateFriendListFromServerResponse:
+    # "list" is an array of credentials objects; entries with clientid >= 1 and avatarid > 0
+    # become friends ("brothers").
+    user = ACCOUNTS.by_id(message.get('user', {}).get('id'))
+    friends = ACCOUNTS.friends_of(user) if user else []
+    # An empty JSON array decodes as nothing in the game, so send {} when there are no friends.
+    return {'list': [credentials(f) for f in friends] if friends else {}}
 
 
 @endpoint('/gbro/resources/message/poll')
@@ -214,6 +263,23 @@ def redacted(value):
     return value
 
 
+def ext_friendcode(body):
+    user = ACCOUNTS.by_id(body.get('id'))
+    return {'ok': True, 'code': user['code'], 'gamertag': user['gamertag']} if user else {'ok': False, 'error': 'Unknown player.'}
+
+
+def ext_addfriend(body):
+    user = ACCOUNTS.by_id(body.get('id'))
+    if user is None:
+        return {'ok': False, 'error': 'Unknown player.'}
+    friend, err = ACCOUNTS.befriend(user, body.get('code'))
+    return {'ok': True, 'gamertag': friend['gamertag']} if friend else {'ok': False, 'error': err}
+
+
+# Endpoints used by the bridge's friend-code popup: plain JSON in, plain JSON out.
+EXT_HANDLERS = {'/gunbros/friendcode': ext_friendcode, '/gunbros/addfriend': ext_addfriend}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'GunBrosNGS/0.1'
 
@@ -226,6 +292,16 @@ class Handler(BaseHTTPRequestHandler):
             body = None
 
         path = self.path.split('?', 1)[0]
+        if path in EXT_HANDLERS:
+            result = EXT_HANDLERS[path](body if isinstance(body, dict) else {})
+            print(f"{datetime.datetime.now().isoformat(timespec='milliseconds')} {path} {json.dumps(body)} -> {json.dumps(result)}", flush=True)
+            data = json.dumps(result).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         handler = HANDLERS.get(path)
         reply = None
         if handler and isinstance(body, dict) and body.get('payload'):
@@ -271,11 +347,31 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def cli(args):
+    """Small admin commands. `befriend` goes through the running server so its state stays in sync."""
+    if args.command == 'accounts':
+        accounts = Accounts(os.path.join(os.path.dirname(os.path.abspath(args.out)), 'accounts.json'))
+        for u in sorted(accounts.data['users'].values(), key=lambda u: u['id']):
+            print(f"{u['id']:>6}  {u['code']}  {u['gamertag']:<20} friends={u.get('friends', [])}")
+    elif args.command == 'befriend':
+        import urllib.request
+        player_id, code = int(args.params[0]), args.params[1]
+        req = urllib.request.Request(f'http://127.0.0.1:{args.port}/gunbros/addfriend', method='PUT',
+                                     data=json.dumps({'id': player_id, 'code': code}).encode())
+        print(urllib.request.urlopen(req).read().decode())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('command', nargs='?', choices=['serve', 'accounts', 'befriend'], default='serve',
+                    help='serve (default); accounts: list players and friend codes; '
+                         'befriend <player id> <friend code>: make two players friends')
+    ap.add_argument('params', nargs='*')
     ap.add_argument('--port', type=int, default=18080)
     ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'capture.jsonl'))
     args = ap.parse_args()
+    if args.command != 'serve':
+        return cli(args)
     global ACCOUNTS
     ACCOUNTS = Accounts(os.path.join(os.path.dirname(os.path.abspath(args.out)), 'accounts.json'))
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)

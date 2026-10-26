@@ -40,7 +40,7 @@ and `capture.jsonl` (every request, passwords redacted).
 | `resources/user/registeruser/` | creates the account |
 | `resources/user/validateuser/` | logs in; the device-level login (by `GLUSOCIALID`) returns the session and credentials, giving the game its client id |
 | `resources/user/attributes/` | stores user attributes |
-| `resources/friend/search` | friends list, currently always empty |
+| `resources/friend/search` | the player's friends ("brothers") as credentials objects |
 | `resources/message/poll` | inbox, currently always empty |
 | everything else | logged, answered 404 |
 
@@ -52,6 +52,20 @@ and `capture.jsonl` (every request, passwords redacted).
    reply (`message.message = {sessionid, list: [credentials]}`) gives it its client id, saved in
    `Credentials.dat`.
 3. From then on requests carry `user.id`, so the server knows which player is asking.
+
+## Friend codes
+
+Every account gets a friend code (`XXXX-XXXX`, no look-alike characters). Friendships are mutual
+and stored in `accounts.json`; the game's friends list (`friend/search`) returns them, so they show
+up in Brotherhood. Two extra endpoints, outside Glu's API, are for the in-game "Add a Bro" popup:
+`PUT /gunbros/friendcode {"id": N}` and `PUT /gunbros/addfriend {"id": N, "code": "XXXX-XXXX"}`.
+
+Admin commands:
+
+```bash
+python3 server/ngs_server.py accounts                 # players, ids, friend codes, friends
+python3 server/ngs_server.py befriend <id> <code>     # via the running server
+```
 
 Still open: the game doesn't adopt the session id yet (`header.sessionid` stays empty), and
 `Session.dat` isn't written.
