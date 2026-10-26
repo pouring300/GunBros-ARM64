@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -134,6 +135,36 @@ static int net_trace(void) {
     return s_trace;
 }
 
+// Optional redirect of Glu's backend (*.glu.com, normally blocked) to a replacement or
+// logging server, read once at the first lookup:
+//   adb shell setprop debug.gunbros.ngs_host 127.0.0.1   (host name or IPv4)
+//   adb shell setprop debug.gunbros.ngs_port 18080       (replaces port 80; optional)
+typedef struct {
+    int enabled;
+    char host[92];      /* PROP_VALUE_MAX */
+    uint16_t port;      /* 0 = keep the original port */
+    uint32_t ip;        /* resolved address, network order; used to match connects */
+} ngs_redirect_t;
+
+static ngs_redirect_t *ngs_redirect(void) {
+    static ngs_redirect_t s_cfg;
+    static int s_loaded = 0;
+    if (!s_loaded) {
+        s_loaded = 1;
+#ifdef __ANDROID__
+        char port[PROP_VALUE_MAX] = {0};
+        __system_property_get("debug.gunbros.ngs_host", s_cfg.host);
+        __system_property_get("debug.gunbros.ngs_port", port);
+        s_cfg.enabled = s_cfg.host[0] != '\0';
+        s_cfg.port = (uint16_t)atoi(port);
+        if (s_cfg.enabled) {
+            LOGI("[NGS] redirecting *.glu.com to %s%s%s", s_cfg.host, port[0] ? " port " : "", port);
+        }
+#endif
+    }
+    return &s_cfg;
+}
+
 static const char *fmt_sockaddr(const struct sockaddr *sa, char *buf, size_t n) {
     if (!sa) {
         snprintf(buf, n, "-");
@@ -213,6 +244,16 @@ static void h_connect(hle_t *c) {
         set_guest_errno(EFAULT);
         c->r0 = (uint32_t)-1;
         return;
+    }
+    struct sockaddr_in redirected;
+    ngs_redirect_t *ngs = ngs_redirect();
+    if (ngs->enabled && ngs->port && addr && addr->sa_family == AF_INET && len >= (socklen_t)sizeof(redirected)) {
+        const struct sockaddr_in *sin = (const struct sockaddr_in*)addr;
+        if (sin->sin_addr.s_addr == ngs->ip && ntohs(sin->sin_port) == 80) {
+            redirected = *sin;
+            redirected.sin_port = htons(ngs->port);
+            addr = (const struct sockaddr*)&redirected;
+        }
     }
     int ret = connect(fd, addr, len);
     int err = errno;
@@ -588,20 +629,26 @@ static void h_gethostbyname(hle_t *c) {
         return;
     }
 
-    if (strstr(host, "glu.com") != NULL) {
-        log_stub_call_once("gethostbyname:blocked_glu", c->lr, host);
-        c->r0 = 0;
-        return;
+    const char *lookup = host;
+    int is_glu = strstr(host, "glu.com") != NULL;
+    if (is_glu) {
+        if (!ngs_redirect()->enabled) {
+            log_stub_call_once("gethostbyname:blocked_glu", c->lr, host);
+            c->r0 = 0;
+            return;
+        }
+        lookup = ngs_redirect()->host;
+        LOGI("[NGS] '%s' -> %s", host, lookup);
     }
 
-    LOGI("[NET:gethostbyname] Resolving host '%s'...", host);
+    LOGI("[NET:gethostbyname] Resolving host '%s'...", lookup);
 
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
-    int gai_err = getaddrinfo(host, NULL, &hints, &res);
+    int gai_err = getaddrinfo(lookup, NULL, &hints, &res);
     if (gai_err != 0 || !res) {
         LOGE("[NET:gethostbyname] getaddrinfo('%s') failed: %s (err=%d)",
              host, gai_strerror(gai_err), gai_err);
@@ -613,6 +660,7 @@ static void h_gethostbyname(hle_t *c) {
     struct sockaddr_in *sin = (struct sockaddr_in*)res->ai_addr;
     uint32_t ip = sin->sin_addr.s_addr;
     freeaddrinfo(res);
+    if (is_glu) ngs_redirect()->ip = ip;
 
     char ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &ip, ip_str, sizeof(ip_str));
