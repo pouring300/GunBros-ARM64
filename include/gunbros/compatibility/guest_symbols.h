@@ -221,6 +221,13 @@
 #define GUEST_MENU_ACTION_MENU_SPECIFIC      0x67u        /* DoAction: passes the argument to the menu (vtable +0x1c) */
 #define GUEST_MENU_ACTION_NONE               0x9fu        /* DoAction: default case, does nothing */
 #define GUEST_VTABLE_CMENUFRIENDS            0x004c1938u  /* Brotherhood menu */
+#define GUEST_VT_MENU_REFRESH                0x1cu        /* CMenu vtable: Refresh(MenuAction, int) */
+#define GUEST_MENU_REFRESH_BIND              0x2bu        /* Refresh action sent once a menu's data has loaded */
+#define GUEST_OFF_MENU_FRIENDS_LIST_BOUND    0x1099u      /* CMenuFriends: friend list bound (Refresh 0x2b skips it if set) */
+#define GUEST_OFF_GB_FRIEND_DATA_MGR         0x34u        /* GunBros -> CFriendDataManager* */
+#define GUEST_OFF_FRIEND_MGR_FETCH_LIST      0xb4u        /* CFriendDataManager -> friends being fetched (CNGSRemoteUserList*) */
+#define GUEST_OFF_SERVER_OBJECT_PENDING      0x08u        /* CNGSServerObject: outstanding requests (isReady when 0) */
+#define GUEST_FN_NGS_UPDATE_FRIEND_LIST      0x00411e28u  /* CNGSLocalUser::UpdateFriendListFromServer() */
 #define GUEST_FN_SHOW_SEARCH_POPUP           0x002606f8u  /* CAndroidSearchPopup::ShowAndroidSearchPopup(title, a, b, c, d) */
 #define GUEST_FN_SEARCH_POPUP_REFRESH        0x00260b98u  /* CAndroidSearchPopup::RefreshMidMenuPopup(popup, MenuAction) */
 #define GUEST_FN_SHOW_MESSAGE_POPUP          0x0025fcc0u  /* CAndroidMessagePopup::ShowAndroidMessagePopup(type, title, text, a..e) */

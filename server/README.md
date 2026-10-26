@@ -71,7 +71,7 @@ up in Brotherhood.
 
 In the game, the "Invite more friends" banner on the Bros tab opens "Add a Bro" (the bridge reuses
 the OpenSpy mod's popups): the title shows the player's own code, and entering a friend's code adds
-them. New Bros show up after restarting the game, when it loads its friend list. The bridge uses
+them; Brotherhood reloads its list right away. The bridge uses
 two endpoints outside Glu's API, authenticated with the player's NGS session id:
 `PUT /gunbros/friendcode {"session": "..."}` and `PUT /gunbros/addfriend {"session": "...", "code": "XXXX-XXXX"}`.
 

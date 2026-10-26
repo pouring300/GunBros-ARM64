@@ -272,8 +272,8 @@ void game_hooks_ngs_profile_online(void) {
 
 /* Brotherhood's "Invite more friends" banner opens the OpenSpy mod's search popup, reused as
    "Add a Bro": its title shows the player's own friend code and the field takes a friend's. The
-   bridge asks the replacement server (ngs_ext.h) to make them friends and reports the result in
-   the mod's message popup. */
+   bridge asks the replacement server (ngs_ext.h) to make them friends, reports the result in the
+   mod's message popup and reloads the friend list. */
 
 enum {
     HOOK_SVC_MENU_ACTION = 0,           /* CMenuAction::DoAction */
@@ -297,6 +297,9 @@ static int s_add_bro_state = ADD_BRO_IDLE;
 static uint32_t s_add_bro_popup = 0;    /* our CAndroidSearchPopup while it is shown */
 static uint32_t s_add_bro_message = 0;  /* our CAndroidMessagePopup while it is shown */
 static char s_add_bro_code[32];
+static uint32_t s_friends_menu = 0;       /* the CMenuFriends the banner was tapped on */
+static int s_friends_bind_frames = 0;     /* frames left to wait before re-binding its friend list */
+#define FRIENDS_BIND_MAX_FRAMES 600
 
 /* Hook a guest function that starts with `push {...}; ldr r4, [pc, #imm]` and takes
    (r0 = object, r1 = action): the bridge sees the call first (svc) and returns the action to
@@ -357,6 +360,7 @@ void game_hooks_on_svc(uint32_t idx) {
         if (action == GUEST_MENU_ACTION_MENU_SPECIFIC && dynarmic_backend_get_reg(2) == 0 &&
             vtable == GUEST_VTABLE_CMENUFRIENDS) {
             if (s_add_bro_state == ADD_BRO_IDLE) s_add_bro_state = ADD_BRO_REQUESTED;
+            s_friends_menu = object;
             action = GUEST_MENU_ACTION_NONE;
         }
         break;
@@ -450,8 +454,39 @@ static bool read_session_id(char *out, size_t out_size) {
     return i > 0;
 }
 
+/* After a friend-list reload the game refreshes Brotherhood (CProfileManager::HandleFriendListUpdate
+   -> MenuAction 0x58 -> CMenuFriends::RefreshFriendsList), which fetches the friends' data
+   asynchronously. On a normal menu load the menu stack then sends 0x2b (CMenuStack::BindMenu) to
+   bind the populated list; mid-session nothing does, so the list stays empty. Bind it ourselves
+   once the data has arrived. */
+static void bind_friends_menu(void) {
+    if (s_friends_bind_frames == 0) return;
+    s_friends_bind_frames--;
+    /* Wait (at least ~1 s, at most ~10 s) for the friend manager's fetch to finish. */
+    uint32_t gunbros = get_gunbros(), mgr = 0, fetch = 0, pending = 0;
+    if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_FRIEND_DATA_MGR, &mgr, 4);
+    if (mgr) guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FETCH_LIST, &fetch, 4);
+    if (fetch) guest_mem_read(fetch + GUEST_OFF_SERVER_OBJECT_PENDING, &pending, 4);
+    if (s_friends_bind_frames > FRIENDS_BIND_MAX_FRAMES - 60 || (pending != 0 && s_friends_bind_frames > 0)) return;
+    s_friends_bind_frames = 0;
+    uint32_t vtable = 0, refresh = 0;
+    uint8_t unbound = 0;
+    if (s_friends_menu) guest_mem_read(s_friends_menu, &vtable, 4);
+    if (vtable != GUEST_VTABLE_CMENUFRIENDS) return;
+    /* Refresh(0x2b) only binds a list that isn't bound yet; CMenuFriends::Update clears this flag
+       the same way before it reloads the list. */
+    guest_mem_write(s_friends_menu + GUEST_OFF_MENU_FRIENDS_LIST_BOUND, &unbound, 1);
+    guest_mem_read(vtable + GUEST_VT_MENU_REFRESH, &refresh, 4);
+    prepare_call_arm(s_friends_menu);
+    dynarmic_backend_set_reg(1, GUEST_MENU_REFRESH_BIND);
+    dynarmic_backend_set_reg(2, (uint32_t)-1);
+    run_guest(refresh, "friends_bind");
+}
+
 void game_hooks_add_bro(void) {
     char session[64], body[160], reply[NGS_EXT_REPLY_MAX], text[128];
+
+    bind_friends_menu();
 
     switch (s_add_bro_state) {
     case ADD_BRO_REQUESTED:
@@ -503,10 +538,16 @@ void game_hooks_add_bro(void) {
         if (!ngs_ext_poll(reply, sizeof(reply))) break;
         char name[64], error[96];
         if (ngs_ext_json_string(reply, "gamertag", name, sizeof(name))) {
-            /* The game only loads its friend list at startup; reloading it mid-session
-               (CNGSLocalUser::UpdateFriendListFromServer) leaves Brotherhood empty. */
             snprintf(text, sizeof(text), "%s is now your Bro!", name);
-            show_add_bro_message("Restart to see new Bros", text);
+            show_add_bro_message("Add a Bro", text);
+            /* Reload the friend list, as CGluSocialManager::LoadFriends does. */
+            uint32_t ngs = guest_singleton(GUEST_SINGLETON_NGS), local_user = 0;
+            if (ngs) guest_mem_read(ngs + GUEST_OFF_NGS_LOCAL_USER, &local_user, 4);
+            if (local_user) {
+                prepare_call_arm(local_user);
+                run_guest(GUEST_FN_NGS_UPDATE_FRIEND_LIST, "ngs_friends");
+                s_friends_bind_frames = FRIENDS_BIND_MAX_FRAMES;
+            }
         } else if (ngs_ext_json_string(reply, "error", error, sizeof(error))) {
             show_add_bro_message("Add a Bro", error);
         } else {
