@@ -14,6 +14,7 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <sys/system_properties.h>
 #endif
 
 /* ---------------- Abort / Halt ---------------- */
@@ -116,6 +117,57 @@ static void h_stub_mkstemp(hle_t *c) {
 
 /* ---------------- Network Passthrough Implementations ---------------- */
 
+// Verbose traffic logging, read once at the first network call:
+//   adb shell setprop debug.gunbros.net 1   (then restart the game)
+static int net_trace(void) {
+    static int s_trace = -1;
+    if (s_trace < 0) {
+#ifdef __ANDROID__
+        char val[PROP_VALUE_MAX] = {0};
+        __system_property_get("debug.gunbros.net", val);
+        s_trace = (val[0] == '1');
+        if (s_trace) LOGI("[NET] verbose traffic logging enabled (debug.gunbros.net=1)");
+#else
+        s_trace = 0;
+#endif
+    }
+    return s_trace;
+}
+
+static const char *fmt_sockaddr(const struct sockaddr *sa, char *buf, size_t n) {
+    if (!sa) {
+        snprintf(buf, n, "-");
+    } else if (sa->sa_family == AF_INET) {
+        const struct sockaddr_in *sin = (const struct sockaddr_in*)sa;
+        char ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
+        snprintf(buf, n, "%s:%u", ip, ntohs(sin->sin_port));
+    } else {
+        snprintf(buf, n, "family=%d", sa->sa_family);
+    }
+    return buf;
+}
+
+// First bytes of a packet as hex plus printable text, for spotting protocol messages.
+static const char *fmt_preview(const void *data, ssize_t len, char *buf, size_t n) {
+    const unsigned char *p = (const unsigned char*)data;
+    size_t show = len > 32 ? 32 : (size_t)(len < 0 ? 0 : len);
+    size_t o = 0;
+    for (size_t i = 0; i < show && o + 3 < n; i++) o += snprintf(buf + o, n - o, "%02x", p[i]);
+    if (o + 3 < n) o += snprintf(buf + o, n - o, " |");
+    for (size_t i = 0; i < show && o + 2 < n; i++) buf[o++] = (p[i] >= 0x20 && p[i] < 0x7f) ? p[i] : '.';
+    if (o + 1 < n) buf[o++] = '|';
+    buf[o < n ? o : n - 1] = '\0';
+    return buf;
+}
+
+static const char *fmt_local(int fd, char *buf, size_t n) {
+    struct sockaddr_storage ss;
+    socklen_t sl = sizeof(ss);
+    if (getsockname(fd, (struct sockaddr*)&ss, &sl) != 0) return "?";
+    return fmt_sockaddr((struct sockaddr*)&ss, buf, n);
+}
+
 typedef struct {
     int32_t tv_sec;
     int32_t tv_usec;
@@ -163,17 +215,20 @@ static void h_connect(hle_t *c) {
         return;
     }
     int ret = connect(fd, addr, len);
+    int err = errno;
+    char a[64];
+    fmt_sockaddr(addr, a, sizeof(a));
     if (ret < 0) {
-        set_guest_errno(errno);
+        set_guest_errno(err);
         c->r0 = (uint32_t)-1;
-        if (errno == EINPROGRESS) {
-            LOGI("[NET:connect] fd=%d EINPROGRESS (non-blocking connect initiated)", fd);
+        if (err == EINPROGRESS) {
+            LOGI("[NET:connect] fd=%d -> %s EINPROGRESS (non-blocking connect initiated)", fd, a);
         } else {
-            LOGE("[NET:connect] fd=%d FAILED errno=%d (%s)", fd, errno, strerror(errno));
+            LOGE("[NET:connect] fd=%d -> %s FAILED errno=%d (%s)", fd, a, err, strerror(err));
         }
     } else {
         c->r0 = 0;
-        LOGI("[NET:connect] fd=%d connected successfully", fd);
+        LOGI("[NET:connect] fd=%d -> %s connected successfully", fd, a);
     }
 }
 
@@ -188,13 +243,15 @@ static void h_bind(hle_t *c) {
         return;
     }
     int ret = bind(fd, addr, len);
+    char a[64], l[64];
     if (ret < 0) {
         set_guest_errno(errno);
         c->r0 = (uint32_t)-1;
-        LOGE("[NET:bind] fd=%d FAILED errno=%d (%s)", fd, errno, strerror(errno));
+        LOGE("[NET:bind] fd=%d %s FAILED errno=%d (%s)", fd, fmt_sockaddr(addr, a, sizeof(a)), errno, strerror(errno));
     } else {
         c->r0 = 0;
-        LOGI("[NET:bind] fd=%d bound successfully", fd);
+        LOGI("[NET:bind] fd=%d requested %s, bound to %s", fd,
+             fmt_sockaddr(addr, a, sizeof(a)), fmt_local(fd, l, sizeof(l)));
     }
 }
 
@@ -218,6 +275,10 @@ static void h_send(hle_t *c) {
         }
     } else {
         c->r0 = (uint32_t)ret;
+        if (net_trace()) {
+            char pv[128];
+            LOGI("[NET:send] fd=%d %zd bytes %s", fd, ret, fmt_preview(buf, ret, pv, sizeof(pv)));
+        }
     }
 }
 
@@ -241,6 +302,10 @@ static void h_recv(hle_t *c) {
         }
     } else {
         c->r0 = (uint32_t)ret;
+        if (net_trace()) {
+            char pv[128];
+            LOGI("[NET:recv] fd=%d %zd bytes %s", fd, ret, ret ? fmt_preview(buf, ret, pv, sizeof(pv)) : "(peer closed)");
+        }
     }
 }
 
@@ -263,14 +328,21 @@ static void h_sendto(hle_t *c) {
     }
     const struct sockaddr *dest_addr = g_dest_addr ? (const struct sockaddr*)guest_to_host(g_dest_addr) : NULL;
     ssize_t ret = sendto(fd, buf, len, flags, dest_addr, addrlen);
+    char a[64];
     if (ret < 0) {
         set_guest_errno(errno);
         c->r0 = (uint32_t)-1;
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            LOGE("[NET:sendto] fd=%d len=%zu FAILED errno=%d (%s)", fd, len, errno, strerror(errno));
+            LOGE("[NET:sendto] fd=%d -> %s len=%zu FAILED errno=%d (%s)", fd,
+                 fmt_sockaddr(dest_addr, a, sizeof(a)), len, errno, strerror(errno));
         }
     } else {
         c->r0 = (uint32_t)ret;
+        if (net_trace()) {
+            char pv[128], l[64];
+            LOGI("[NET:sendto] fd=%d %s -> %s %zd bytes %s", fd, fmt_local(fd, l, sizeof(l)),
+                 fmt_sockaddr(dest_addr, a, sizeof(a)), ret, fmt_preview(buf, ret, pv, sizeof(pv)));
+        }
     }
 }
 
@@ -303,6 +375,11 @@ static void h_recvfrom(hle_t *c) {
         }
     } else {
         c->r0 = (uint32_t)ret;
+        if (net_trace()) {
+            char pv[128], a[64];
+            LOGI("[NET:recvfrom] fd=%d <- %s %zd bytes %s", fd, fmt_sockaddr(src_addr, a, sizeof(a)),
+                 ret, fmt_preview(buf, ret, pv, sizeof(pv)));
+        }
     }
 }
 
@@ -458,6 +535,10 @@ static void h_getsockname(hle_t *c) {
         c->r0 = (uint32_t)-1;
     } else {
         c->r0 = 0;
+        if (net_trace()) {
+            char a[64];
+            LOGI("[NET:getsockname] fd=%d -> %s", fd, fmt_sockaddr(addr, a, sizeof(a)));
+        }
     }
 }
 
@@ -632,6 +713,7 @@ static void h_gethostname(hle_t *c) {
         c->r0 = (uint32_t)-1;
     } else {
         c->r0 = 0;
+        LOGI("[NET:gethostname] -> '%s'", name);
     }
 }
 
