@@ -34,6 +34,7 @@ set(GUNBROS_PLATFORM_SOURCES
     src/platform/android_window.c
     src/platform/android_audio.c
     src/platform/network_time.c
+    src/platform/ngs_ext.c
 )
 
 set(GUNBROS_COMPAT_SOURCES

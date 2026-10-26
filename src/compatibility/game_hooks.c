@@ -6,6 +6,8 @@
 #include "gunbros/platform/android_window.h"
 #include "gunbros/platform/network_time.h"
 #include "gunbros/filesystem/path_mapper.h"
+#include "gunbros/compatibility/jni_textbox.h"
+#include "gunbros/platform/ngs_ext.h"
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -264,6 +266,259 @@ void game_hooks_ngs_profile_online(void) {
     online = 1;
     guest_mem_write(profile + GUEST_OFF_PROFILE_ONLINE, &online, 1);
     LOGI("[NGS] signed in, profile online (profile 0x%x)", profile);
+}
+
+/* ---- Add a Bro ---------------------------------------------------------------------------- */
+
+/* Brotherhood's "Invite more friends" banner opens the OpenSpy mod's search popup, reused as
+   "Add a Bro": its title shows the player's own friend code and the field takes a friend's. The
+   bridge asks the replacement server (ngs_ext.h) to make them friends and reports the result in
+   the mod's message popup. */
+
+enum {
+    HOOK_SVC_MENU_ACTION = 0,           /* CMenuAction::DoAction */
+    HOOK_SVC_SEARCH_POPUP_ACTION = 1,   /* CAndroidSearchPopup::RefreshMidMenuPopup */
+    HOOK_SVC_MESSAGE_POPUP_ACTION = 2,  /* CAndroidMessagePopup::RefreshMidMenuPopup */
+};
+
+enum {
+    ADD_BRO_IDLE,
+    ADD_BRO_REQUESTED,      /* banner tapped */
+    ADD_BRO_FETCHING_CODE,  /* asking the server for the player's own code */
+    ADD_BRO_SHOWN,          /* popup open */
+    ADD_BRO_SUBMITTED,      /* friend code entered */
+    ADD_BRO_ADDING,         /* asking the server to add the friend */
+};
+
+#define HOOK_TRAMPOLINES_OFF 0xf000u   /* in the stubs region, i.e. guest 0x8000f000 */
+#define HOOK_TRAMPOLINE_SIZE 0x40u
+
+static int s_add_bro_state = ADD_BRO_IDLE;
+static uint32_t s_add_bro_popup = 0;    /* our CAndroidSearchPopup while it is shown */
+static uint32_t s_add_bro_message = 0;  /* our CAndroidMessagePopup while it is shown */
+static char s_add_bro_code[32];
+
+/* Hook a guest function that starts with `push {...}; ldr r4, [pc, #imm]` and takes
+   (r0 = object, r1 = action): the bridge sees the call first (svc) and returns the action to
+   carry on with, which replaces r1. The two original instructions run in the trampoline (the
+   literal load relocated), then execution continues at fn + 8. */
+static bool hook_action_function(uint8_t *code_base, uint8_t *stubs_base, uint32_t fn,
+                                 uint32_t svc_idx, uint32_t slot) {
+    uint32_t *code = (uint32_t *)(code_base + fn);
+    if ((code[0] & 0xffff4000u) != 0xe92d4000u || (code[1] & 0xfffff000u) != 0xe59f4000u) {
+        LOGE("[HOOK] unexpected code at 0x%08x, not hooked", fn);
+        return false;
+    }
+    uint32_t literal = *(uint32_t *)(code_base + fn + 4 + 8 + (code[1] & 0xfffu));
+    const uint32_t tramp[] = {
+        0xe92d400du,                            /* push {r0, r2, r3, lr} */
+        0xef000000u | (GAME_HOOK_SVC_BASE + svc_idx),  /* svc: r0 = action to use */
+        0xe1a01000u,                            /* mov  r1, r0 */
+        0xe8bd400du,                            /* pop  {r0, r2, r3, lr} */
+        code[0],                                /* push {...}          (original) */
+        0xe59f4004u,                            /* ldr  r4, =literal   (original, relocated) */
+        0xe51ff004u,                            /* ldr  pc, [pc, #-4] */
+        fn + 8,
+        literal,
+    };
+    uint32_t off = HOOK_TRAMPOLINES_OFF + slot * HOOK_TRAMPOLINE_SIZE;
+    memcpy(stubs_base + off, tramp, sizeof(tramp));
+    code[0] = 0xe51ff004u;                      /* ldr pc, [pc, #-4] */
+    code[1] = GUEST_STUBS_BASE + off;
+    return true;
+}
+
+bool game_hooks_install(uint8_t *code_base, uint8_t *stubs_base) {
+    bool ok = hook_action_function(code_base, stubs_base, GUEST_FN_MENU_DO_ACTION,
+                                   HOOK_SVC_MENU_ACTION, 0)
+           && hook_action_function(code_base, stubs_base, GUEST_FN_SEARCH_POPUP_REFRESH,
+                                   HOOK_SVC_SEARCH_POPUP_ACTION, 1)
+           && hook_action_function(code_base, stubs_base, GUEST_FN_MESSAGE_POPUP_REFRESH,
+                                   HOOK_SVC_MESSAGE_POPUP_ACTION, 2);
+    LOGI("[HOOK] menu action hooks %s", ok ? "installed" : "NOT installed");
+    return ok;
+}
+
+static void read_text_field(uint32_t field, char *out, size_t out_size) {
+    uint32_t handle = 0;
+    out[0] = '\0';
+    if (field) guest_mem_read(field + GUEST_OFF_TEXT_FIELD_OBJECT, &handle, 4);
+    if (handle) jni_textbox_read_text(handle, out, out_size);
+}
+
+void game_hooks_on_svc(uint32_t idx) {
+    uint32_t object = dynarmic_backend_get_reg(0), action = dynarmic_backend_get_reg(1);
+    switch (idx) {
+    case HOOK_SVC_MENU_ACTION: {
+        /* Brotherhood's "Invite more friends" banner: action 0x67 with argument 0 on CMenuFriends,
+           which showed the Facebook "How to get Bros" help. */
+        uint32_t vtable = 0;
+        if (object) guest_mem_read(object, &vtable, 4);
+        if (action == GUEST_MENU_ACTION_MENU_SPECIFIC && dynarmic_backend_get_reg(2) == 0 &&
+            vtable == GUEST_VTABLE_CMENUFRIENDS) {
+            if (s_add_bro_state == ADD_BRO_IDLE) s_add_bro_state = ADD_BRO_REQUESTED;
+            action = GUEST_MENU_ACTION_NONE;
+        }
+        break;
+    }
+    case HOOK_SVC_SEARCH_POPUP_ACTION:
+        if (object != 0 && object == s_add_bro_popup) {
+            uint32_t field = 0;
+            guest_mem_read(object + GUEST_OFF_SEARCH_POPUP_FIELD, &field, 4);
+            read_text_field(field, s_add_bro_code, sizeof(s_add_bro_code));
+            s_add_bro_popup = 0;
+            s_add_bro_state = (action == GUEST_POPUP_ACTION_ADD_BUDDY && s_add_bro_code[0])
+                              ? ADD_BRO_SUBMITTED : ADD_BRO_IDLE;
+            action = GUEST_SEARCH_POPUP_ACTION_CLOSE;  /* not an OpenSpy search */
+        }
+        break;
+    case HOOK_SVC_MESSAGE_POPUP_ACTION:
+        if (object != 0 && object == s_add_bro_message) {
+            s_add_bro_message = 0;
+            action = GUEST_POPUP_ACTION_CANCEL;  /* with message type 2: just closes */
+        }
+        break;
+    default:
+        LOGW("[HOOK] unknown hook svc %u", idx);
+        break;
+    }
+    dynarmic_backend_set_reg(0, action);
+}
+
+/* A guest CStrWChar holding `s`. Small and short-lived; never freed. */
+static uint32_t guest_cstrwchar(const char *s) {
+    uint32_t obj = guest_alloc(0x10), words[4] = { GUEST_VTABLE_CSTRWCHAR, GUEST_CSTRWCHAR_MAGIC, 0, 0 };
+    guest_mem_write(obj, words, sizeof(words));
+    prepare_call_arm(obj);
+    dynarmic_backend_set_reg(1, guest_str(s));
+    run_guest(GUEST_FN_CSTRWCHAR_CONCATENATE_CHAR, "cstrwchar");
+    return obj;
+}
+
+/* Call a guest function with r0-r3 and further arguments on the stack. */
+static void call_guest_args(uint32_t fn, const char *tag, const uint32_t *args, int count) {
+    prepare_call_arm(args[0]);
+    for (int i = 1; i < count && i < 4; i++) dynarmic_backend_set_reg(i, args[i]);
+    if (count > 4) {
+        uint32_t sp = GUEST_STACK_TOP - (uint32_t)((count - 4 + 1) & ~1) * 4;
+        guest_mem_write(sp, args + 4, (uint32_t)(count - 4) * 4);
+        dynarmic_backend_set_reg(13, sp);
+    }
+    run_guest(fn, tag);
+}
+
+static uint32_t current_mid_popup(void) {
+    uint32_t gunbros = get_gunbros(), menu_sys = 0, popup = 0;
+    if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_MENUSYS, &menu_sys, 4);
+    if (menu_sys) guest_mem_read(menu_sys + GUEST_OFF_MENU_MID_POPUP, &popup, 4);
+    return popup;
+}
+
+static void show_add_bro_popup(const char *title) {
+    const uint32_t args[] = { guest_cstrwchar(title), GUEST_POPUP_BUTTON_CANCEL,
+                              GUEST_POPUP_BUTTON_ADD_BUDDY, (uint32_t)-1, (uint32_t)-1 };
+    call_guest_args(GUEST_FN_SHOW_SEARCH_POPUP, "add_bro_popup", args, 5);
+    s_add_bro_popup = current_mid_popup();
+}
+
+/* The popup's labels are a single line each (no wrapping): keep texts short. */
+static void show_add_bro_message(const char *title, const char *message) {
+    const uint32_t args[] = { GUEST_MESSAGE_POPUP_TYPE_PLAIN, guest_cstrwchar(title),
+                              guest_cstrwchar(message), (uint32_t)-1, (uint32_t)-1,
+                              (uint32_t)-1, GUEST_POPUP_BUTTON_OK, (uint32_t)-1 };
+    call_guest_args(GUEST_FN_SHOW_MESSAGE_POPUP, "add_bro_message", args, 8);
+    s_add_bro_message = current_mid_popup();
+}
+
+/* The signed-in player's NGS session id (CNGSSession config, UTF-16), as ASCII. */
+static bool read_session_id(char *out, size_t out_size) {
+    uint32_t gunbros = get_gunbros(), profile = 0, session = 0, wstr = 0;
+    out[0] = '\0';
+    if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_PROFILE_MGR, &profile, 4);
+    if (profile) guest_mem_read(profile + GUEST_OFF_PROFILE_SESSION, &session, 4);
+    if (session) guest_mem_read(session + GUEST_OFF_SESSION_ID, &wstr, 4);
+    if (!wstr) return false;
+    size_t i = 0;
+    for (; i + 1 < out_size; i++) {
+        uint16_t ch = 0;
+        guest_mem_read(wstr + (uint32_t)i * 2, &ch, 2);
+        if (ch == 0) break;
+        if (ch < 0x21 || ch > 0x7e || ch == '"' || ch == '\\') return false;
+        out[i] = (char)ch;
+    }
+    out[i] = '\0';
+    return i > 0;
+}
+
+void game_hooks_add_bro(void) {
+    char session[64], body[160], reply[NGS_EXT_REPLY_MAX], text[128];
+
+    switch (s_add_bro_state) {
+    case ADD_BRO_REQUESTED:
+        if (!read_session_id(session, sizeof(session))) {
+            show_add_bro_message("Add a Bro", "Not signed in yet. Try again soon.");
+            s_add_bro_state = ADD_BRO_IDLE;
+            break;
+        }
+        snprintf(body, sizeof(body), "{\"session\": \"%s\"}", session);
+        if (ngs_ext_start("/gunbros/friendcode", body)) s_add_bro_state = ADD_BRO_FETCHING_CODE;
+        break;
+
+    case ADD_BRO_FETCHING_CODE: {
+        if (!ngs_ext_poll(reply, sizeof(reply))) break;
+        char code[32];
+        if (ngs_ext_json_string(reply, "code", code, sizeof(code))) {
+            snprintf(text, sizeof(text), "Your code: %s", code);
+            show_add_bro_popup(text);
+            s_add_bro_state = ADD_BRO_SHOWN;
+        } else {
+            show_add_bro_message("Add a Bro", "Can't reach the Gun Bros server.");
+            s_add_bro_state = ADD_BRO_IDLE;
+        }
+        break;
+    }
+
+    case ADD_BRO_SHOWN:
+        /* Closed some other way (e.g. back key): forget it. */
+        if (s_add_bro_popup != 0 && current_mid_popup() != s_add_bro_popup) {
+            s_add_bro_popup = 0;
+            s_add_bro_state = ADD_BRO_IDLE;
+        }
+        break;
+
+    case ADD_BRO_SUBMITTED:
+        if (!read_session_id(session, sizeof(session))) {
+            show_add_bro_message("Add a Bro", "Not signed in.");
+            s_add_bro_state = ADD_BRO_IDLE;
+            break;
+        }
+        for (char *c = s_add_bro_code; *c; c++) {  /* keep the JSON simple: code characters only */
+            if (*c == '"' || *c == '\\' || (unsigned char)*c < 0x20) *c = ' ';
+        }
+        snprintf(body, sizeof(body), "{\"session\": \"%s\", \"code\": \"%s\"}", session, s_add_bro_code);
+        if (ngs_ext_start("/gunbros/addfriend", body)) s_add_bro_state = ADD_BRO_ADDING;
+        break;
+
+    case ADD_BRO_ADDING: {
+        if (!ngs_ext_poll(reply, sizeof(reply))) break;
+        char name[64], error[96];
+        if (ngs_ext_json_string(reply, "gamertag", name, sizeof(name))) {
+            /* The game only loads its friend list at startup; reloading it mid-session
+               (CNGSLocalUser::UpdateFriendListFromServer) leaves Brotherhood empty. */
+            snprintf(text, sizeof(text), "%s is now your Bro!", name);
+            show_add_bro_message("Restart to see new Bros", text);
+        } else if (ngs_ext_json_string(reply, "error", error, sizeof(error))) {
+            show_add_bro_message("Add a Bro", error);
+        } else {
+            show_add_bro_message("Add a Bro", "Can't reach the Gun Bros server.");
+        }
+        s_add_bro_state = ADD_BRO_IDLE;
+        break;
+    }
+
+    default:
+        break;
+    }
 }
 
 void game_hooks_on_touch_ended(int x, int y) {

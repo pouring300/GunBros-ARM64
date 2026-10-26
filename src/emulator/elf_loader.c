@@ -3,6 +3,7 @@
 #include "gunbros/emulator/dynarmic_backend.h"
 #include "gunbros/emulator/hle_dispatcher.h"
 #include "gunbros/compatibility/game_patches.h"
+#include "gunbros/compatibility/game_hooks.h"
 #include "gunbros/compatibility/guest_symbols.h"
 #include "gunbros/compatibility/jni_virtual_machine.h"
 #include "gunbros/common/sha256.h"
@@ -291,6 +292,7 @@ bool elf_loader_load(const uint8_t *buf, size_t buf_len, const char *game_dir) {
     // Apply engine patches if verified
     if (patches_allowed) {
         game_patches_apply_all(code_base);
+        game_hooks_install(code_base, stubs_base);
     } else {
         LOGE("Skipping game_patches_apply_all due to guest binary SHA-256 mismatch!");
     }

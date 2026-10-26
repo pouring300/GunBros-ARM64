@@ -370,6 +370,32 @@ bool jni_method_textbox_get_text(const jni_call_context_t *ctx) {
     return true;
 }
 
+bool jni_textbox_read_text(uint32_t handle, char *out, size_t out_size) {
+    bool ok = false;
+    if (!out || out_size == 0) return false;
+    out[0] = '\0';
+    pthread_mutex_lock(&s_textbox_mutex);
+    int slot = get_slot_by_handle(handle);
+    JNIEnv *env = slot >= 0 && s_textboxes[slot].real_obj ? platform_get_env() : NULL;
+    jclass cls = env ? get_glu_textbox_class(env) : NULL;
+    jmethodID mid = cls ? (*env)->GetMethodID(env, cls, "GetText", "()Ljava/lang/String;") : NULL;
+    if (mid) {
+        jstring j_res = (jstring)(*env)->CallObjectMethod(env, s_textboxes[slot].real_obj, mid);
+        if (j_res) {
+            const char *chars = (*env)->GetStringUTFChars(env, j_res, NULL);
+            if (chars) {
+                strncpy(out, chars, out_size - 1);
+                out[out_size - 1] = '\0';
+                (*env)->ReleaseStringUTFChars(env, j_res, chars);
+                ok = true;
+            }
+            (*env)->DeleteLocalRef(env, j_res);
+        }
+    }
+    pthread_mutex_unlock(&s_textbox_mutex);
+    return ok;
+}
+
 bool jni_method_textbox_remove_text_view(const jni_call_context_t *ctx) {
     uint32_t handle = *ctx->r1;
     LOGI("[GluTextBox:RemoveTextView] handle=0x%x", handle);

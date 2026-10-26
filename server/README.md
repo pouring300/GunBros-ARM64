@@ -67,14 +67,19 @@ stored just before each file's CRC).
 
 Every account gets a friend code (`XXXX-XXXX`, no look-alike characters). Friendships are mutual
 and stored in `accounts.json`; the game's friends list (`friend/search`) returns them, so they show
-up in Brotherhood. Two extra endpoints, outside Glu's API, are for the in-game "Add a Bro" popup:
-`PUT /gunbros/friendcode {"id": N}` and `PUT /gunbros/addfriend {"id": N, "code": "XXXX-XXXX"}`.
+up in Brotherhood.
+
+In the game, the "Invite more friends" banner on the Bros tab opens "Add a Bro" (the bridge reuses
+the OpenSpy mod's popups): the title shows the player's own code, and entering a friend's code adds
+them. New Bros show up after restarting the game, when it loads its friend list. The bridge uses
+two endpoints outside Glu's API, authenticated with the player's NGS session id:
+`PUT /gunbros/friendcode {"session": "..."}` and `PUT /gunbros/addfriend {"session": "...", "code": "XXXX-XXXX"}`.
 
 Admin commands:
 
 ```bash
 python3 server/ngs_server.py accounts                 # players, ids, friend codes, friends
-python3 server/ngs_server.py befriend <id> <code>     # via the running server
+python3 server/ngs_server.py befriend <id> <code>     # via the running server (uses server/admin.token)
 ```
 
 ## Profile data

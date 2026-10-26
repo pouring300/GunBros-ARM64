@@ -46,6 +46,24 @@ void game_hooks_auto_register(void);
  */
 void game_hooks_ngs_profile_online(void);
 
+/* Guest code reaches the bridge through `svc GAME_HOOK_SVC_BASE + n` (see game_hooks_install). */
+#define GAME_HOOK_SVC_BASE  0x3000u
+#define GAME_HOOK_SVC_COUNT 0x10u
+
+/**
+ * Patch the guest to call into the bridge for the "Add a Bro" flow: CMenuAction::DoAction (to
+ * catch Brotherhood's "Invite more friends" banner) and the action handlers of the OpenSpy mod's
+ * search and message popups. Trampolines live in the stubs region. A function whose code isn't
+ * what we expect is left alone, and the function returns false.
+ */
+bool game_hooks_install(uint8_t *code_base, uint8_t *stubs_base);
+
+/** Handle `svc GAME_HOOK_SVC_BASE + idx` from the guest. */
+void game_hooks_on_svc(uint32_t idx);
+
+/** Called every frame: show the "Add a Bro" popup when requested and act on its result. */
+void game_hooks_add_bro(void);
+
 GUNBROS_EXTERN_C_END
 
 #endif // GUNBROS_GAME_HOOKS_H

@@ -214,4 +214,30 @@
    user id (resources/user/validateuser/ with userattribute GLUSOCIALID for network 0). */
 #define GUEST_FN_NGS_LOCAL_USER_VALIDATE     0x00411a14u
 
+/* Add a Bro: the bridge hooks CMenuAction::DoAction to catch the Bros tab's "Invite more friends"
+   banner, shows the OpenSpy mod's search popup instead of Glu's Facebook help, and hooks the mod's
+   popup action handlers to read the friend code and close its own popups. */
+#define GUEST_FN_MENU_DO_ACTION              0x002e655cu  /* CMenuAction::DoAction(CMenu*, MenuAction, uint, uint) */
+#define GUEST_MENU_ACTION_MENU_SPECIFIC      0x67u        /* DoAction: passes the argument to the menu (vtable +0x1c) */
+#define GUEST_MENU_ACTION_NONE               0x9fu        /* DoAction: default case, does nothing */
+#define GUEST_VTABLE_CMENUFRIENDS            0x004c1938u  /* Brotherhood menu */
+#define GUEST_FN_SHOW_SEARCH_POPUP           0x002606f8u  /* CAndroidSearchPopup::ShowAndroidSearchPopup(title, a, b, c, d) */
+#define GUEST_FN_SEARCH_POPUP_REFRESH        0x00260b98u  /* CAndroidSearchPopup::RefreshMidMenuPopup(popup, MenuAction) */
+#define GUEST_FN_SHOW_MESSAGE_POPUP          0x0025fcc0u  /* CAndroidMessagePopup::ShowAndroidMessagePopup(type, title, text, a..e) */
+#define GUEST_FN_MESSAGE_POPUP_REFRESH       0x0025f6e8u  /* CAndroidMessagePopup::RefreshMidMenuPopup(popup, MenuAction) */
+#define GUEST_OFF_SEARCH_POPUP_FIELD         0xf8u        /* CAndroidSearchPopup -> CAndroidUiTextField* */
+#define GUEST_OFF_TEXT_FIELD_OBJECT          0x18u        /* CAndroidUiTextField -> GluTextBox jobject (bridge text box handle) */
+#define GUEST_OFF_MENU_MID_POPUP             0x8cu        /* CMenuSystem -> current CMenuMidPopup* */
+#define GUEST_OFF_SESSION_ID                 0x20u        /* CNGSSession -> session id (UTF-16, CNGSSessionConfig at +0x18) */
+#define GUEST_VTABLE_CSTRWCHAR               0x004950e8u
+/* The mod's popup buttons: label index n (IDS_ANDROID_UI_CANCEL, _SUBMIT, _GO, _INVITE, _RETRY,
+   _ADD_BUDDY, _REMOVE_BUDDY, _OK, ...) fires MenuAction 0xa8 + n. */
+#define GUEST_POPUP_BUTTON_CANCEL            0u
+#define GUEST_POPUP_BUTTON_ADD_BUDDY         5u
+#define GUEST_POPUP_BUTTON_OK                8u
+#define GUEST_POPUP_ACTION_CANCEL            0xa8u
+#define GUEST_POPUP_ACTION_ADD_BUDDY         0xadu
+#define GUEST_SEARCH_POPUP_ACTION_CLOSE      0xa9u        /* search popup: just hides it */
+#define GUEST_MESSAGE_POPUP_TYPE_PLAIN       2u           /* message popup type whose cancel just hides it */
+
 #endif // GUNBROS_GUEST_SYMBOLS_H

@@ -336,29 +336,44 @@ def get_net_time(message):
 
 
 def redacted(value):
-    """Copy of a request body with passwords removed, for the capture log."""
+    """Copy of a request body for the capture log, without passwords or private profile data."""
     if isinstance(value, dict):
-        return {k: ('<redacted>' if k.lower() == 'password' else redacted(v)) for k, v in value.items()}
+        out = {k: ('<redacted>' if k.lower() == 'password' else redacted(v)) for k, v in value.items()}
+        if isinstance(out.get('avatarattributes'), list):
+            out['avatarattributes'] = [a for a in out['avatarattributes']
+                                       if 'name' not in a or is_public_attribute(a)]
+        return out
     if isinstance(value, list):
         return [redacted(v) for v in value]
     return value
 
 
+def ext_player(body):
+    """The player an extension request is for: by session id (the game), or by account id with
+    the admin token (the `befriend` command)."""
+    if body.get('session'):
+        return ACCOUNTS.by_session(body['session'])
+    if ADMIN_TOKEN and body.get('admin') == ADMIN_TOKEN:
+        return ACCOUNTS.by_id(body.get('id'))
+    return None
+
+
 def ext_friendcode(body):
-    user = ACCOUNTS.by_id(body.get('id'))
-    return {'ok': True, 'code': user['code'], 'gamertag': user['gamertag']} if user else {'ok': False, 'error': 'Unknown player.'}
+    user = ext_player(body)
+    return {'ok': True, 'code': user['code'], 'gamertag': user['gamertag']} if user else {'ok': False, 'error': 'Not signed in.'}
 
 
 def ext_addfriend(body):
-    user = ACCOUNTS.by_id(body.get('id'))
+    user = ext_player(body)
     if user is None:
-        return {'ok': False, 'error': 'Unknown player.'}
+        return {'ok': False, 'error': 'Not signed in.'}
     friend, err = ACCOUNTS.befriend(user, body.get('code'))
     return {'ok': True, 'gamertag': friend['gamertag']} if friend else {'ok': False, 'error': err}
 
 
-# Endpoints used by the bridge's friend-code popup: plain JSON in, plain JSON out.
+# Endpoints used by the bridge's "Add a Bro" popup: plain JSON in, plain JSON out.
 EXT_HANDLERS = {'/gunbros/friendcode': ext_friendcode, '/gunbros/addfriend': ext_addfriend}
+ADMIN_TOKEN = None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -437,9 +452,15 @@ def cli(args):
     elif args.command == 'befriend':
         import urllib.request
         player_id, code = int(args.params[0]), args.params[1]
+        with open(admin_token_path(args)) as f:
+            token = f.read().strip()
         req = urllib.request.Request(f'http://127.0.0.1:{args.port}/gunbros/addfriend', method='PUT',
-                                     data=json.dumps({'id': player_id, 'code': code}).encode())
+                                     data=json.dumps({'id': player_id, 'code': code, 'admin': token}).encode())
         print(urllib.request.urlopen(req).read().decode())
+
+
+def admin_token_path(args):
+    return os.path.join(os.path.dirname(os.path.abspath(args.out)), 'admin.token')
 
 
 def main():
@@ -455,6 +476,11 @@ def main():
         return cli(args)
     global ACCOUNTS
     ACCOUNTS = Accounts(os.path.join(os.path.dirname(os.path.abspath(args.out)), 'accounts.json'))
+    global ADMIN_TOKEN
+    ADMIN_TOKEN = secrets.token_hex(16)
+    fd = os.open(admin_token_path(args), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(ADMIN_TOKEN + '\n')
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
     server.capture_path = args.out
     print(f'NGS stand-in on 127.0.0.1:{args.port}, capturing to {args.out}; handlers: {sorted(HANDLERS)}', flush=True)

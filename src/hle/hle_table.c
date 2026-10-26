@@ -1,4 +1,5 @@
 #include "hle_internal.h"
+#include "gunbros/compatibility/game_hooks.h"
 #include "gunbros/compatibility/jni_virtual_machine.h"
 #include <time.h>
 #include <unistd.h>
@@ -161,6 +162,11 @@ void on_dynarmic_svc(uint32_t swi) {
         handle_jni_call(jni_idx, &r0, &r1, &r2, &r3, sp, lr);
         dynarmic_backend_set_reg(0, r0);
         dynarmic_backend_set_reg(1, r1);
+        return;
+    }
+
+    if (swi >= GAME_HOOK_SVC_BASE && swi < GAME_HOOK_SVC_BASE + GAME_HOOK_SVC_COUNT) {
+        game_hooks_on_svc(swi - GAME_HOOK_SVC_BASE);
         return;
     }
 

@@ -28,3 +28,4 @@ third_party/boost
 # Replacement NGS server runtime data (accounts, request captures)
 server/*.jsonl
 server/accounts.json*
+server/admin.token

@@ -18,6 +18,9 @@ void jni_textbox_destroy(uint32_t handle);
 bool jni_textbox_is_string_obj(uint32_t str_obj);
 uint32_t jni_textbox_get_string_ptr(uint32_t str_obj);
 
+/* Read a text box's current text (UTF-8) from the bridge, e.g. while handling a game hook. */
+bool jni_textbox_read_text(uint32_t handle, char *out, size_t out_size);
+
 /* JNI Dispatch method handlers */
 bool jni_method_textbox_set_bounds(const jni_call_context_t *ctx);
 bool jni_method_textbox_set_visible(const jni_call_context_t *ctx);
