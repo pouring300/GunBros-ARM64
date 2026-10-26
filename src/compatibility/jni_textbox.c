@@ -295,8 +295,11 @@ bool jni_method_textbox_set_password_mask(const jni_call_context_t *ctx) {
 
 bool jni_method_textbox_set_text(const jni_call_context_t *ctx) {
     uint32_t handle = *ctx->r1;
-    const char *text = jvm_get_last_string();
-    LOGI("[GluTextBox:SetText] handle=0x%x, text='%s'", handle, text ? text : "(null)");
+    /* CAndroidUiTextField::SetText(text, hint) creates the text string, then the hint, right
+       before calling GluTextBox.SetText. */
+    const char *text = jvm_get_previous_string(), *hint = jvm_get_last_string();
+    /* Never log the text itself: it can be a saved login or password. */
+    LOGI("[GluTextBox:SetText] handle=0x%x, %zu chars, hint='%s'", handle, strlen(text), hint);
 
     pthread_mutex_lock(&s_textbox_mutex);
     int slot = get_slot_by_handle(handle);
@@ -309,8 +312,8 @@ bool jni_method_textbox_set_text(const jni_call_context_t *ctx) {
                 if (cls) {
                     jmethodID mid = (*env)->GetMethodID(env, cls, "SetText", "(Ljava/lang/String;Ljava/lang/String;)V");
                     if (mid) {
-                        jstring j_text = (*env)->NewStringUTF(env, text ? text : "");
-                        jstring j_hint = (*env)->NewStringUTF(env, "");
+                        jstring j_text = (*env)->NewStringUTF(env, text);
+                        jstring j_hint = (*env)->NewStringUTF(env, hint);
                         (*env)->CallVoidMethod(env, real_obj, mid, j_text, j_hint);
                         if (j_text) (*env)->DeleteLocalRef(env, j_text);
                         if (j_hint) (*env)->DeleteLocalRef(env, j_hint);
@@ -360,7 +363,7 @@ bool jni_method_textbox_get_text(const jni_call_context_t *ctx) {
             memcpy(guest_buf, s_textboxes[slot].text_buf, len + 1);
         }
 
-        LOGI("[GluTextBox:GetText] handle=0x%x -> '%s'", handle, s_textboxes[slot].text_buf);
+        LOGI("[GluTextBox:GetText] handle=0x%x -> %zu chars", handle, strlen(s_textboxes[slot].text_buf));
         // Return the guest jstring handle: handle + 0x40
         *ctx->r0 = handle + 0x40;
     } else {

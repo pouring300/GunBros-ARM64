@@ -16,6 +16,7 @@ typedef struct {
 static JniMethodInfo s_jni_methods[MAX_JNI_METHODS];
 static int s_jni_method_count = 1;
 static char s_last_jni_string[512] = {0};
+static char s_prev_jni_string[512] = {0};  /* the string created before the last one */
 static char s_last_byte_array[512] = {0};
 
 void jvm_virtual_init(uint8_t *heap_base, uint8_t *stubs_base, const char *game_dir) {
@@ -136,6 +137,10 @@ void handle_jvm_call(int idx, uint32_t *r0, uint32_t *r1, uint32_t *r2, uint32_t
 
 const char* jvm_get_last_string(void) {
     return s_last_jni_string;
+}
+
+const char* jvm_get_previous_string(void) {
+    return s_prev_jni_string;
 }
 
 const char* jvm_get_last_byte_array(void) {
@@ -373,13 +378,14 @@ void handle_jni_call(int idx, uint32_t *r0, uint32_t *r1, uint32_t *r2, uint32_t
         {
             const uint16_t *uchars = (const uint16_t*)guest_to_host(*r1);
             uint32_t ulen = *r2;
+            memcpy(s_prev_jni_string, s_last_jni_string, sizeof(s_prev_jni_string));
             if (uchars && ulen > 0) {
                 if (ulen >= sizeof(s_last_jni_string)) ulen = sizeof(s_last_jni_string) - 1;
                 for (uint32_t i = 0; i < ulen; i++) {
                     s_last_jni_string[i] = (char)(uchars[i] & 0x7f);
                 }
                 s_last_jni_string[ulen] = '\0';
-                LOGI("JNI NewString: '%s'", s_last_jni_string);
+                DLOG("JNI NewString: %u chars", ulen);
             } else {
                 s_last_jni_string[0] = '\0';
             }
@@ -390,10 +396,11 @@ void handle_jni_call(int idx, uint32_t *r0, uint32_t *r1, uint32_t *r2, uint32_t
         case 167: // NewStringUTF(env, bytes)
         {
             const char *str = (const char*)guest_to_host(*r1);
+            memcpy(s_prev_jni_string, s_last_jni_string, sizeof(s_prev_jni_string));
             if (str) {
                 strncpy(s_last_jni_string, str, sizeof(s_last_jni_string) - 1);
                 s_last_jni_string[sizeof(s_last_jni_string) - 1] = '\0';
-                DLOG("JNI NewStringUTF: '%s'", s_last_jni_string);
+                DLOG("JNI NewStringUTF: %zu chars", strlen(s_last_jni_string));
             } else {
                 s_last_jni_string[0] = '\0';
             }
