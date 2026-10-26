@@ -175,12 +175,11 @@ def session_reply(user):
     """Reply body shared by register/validate.
 
     Two login chains use these endpoints: CGluSocialManager reads the top-level "gamertag"
-    (registration) or "list" (validation, a credentials object),
-    while CNGSLocalUser reads /payload/0/message/message = {"sessionid", "list": [credentials]}
-    and writes Credentials.dat and Session.dat from it.
+    (registration) or "list" (validation, a credentials object). CNGSLocalUser reads the
+    top-level "sessionid" (CNGSSessionConfig, saved to Session.dat) and "list" (a credentials
+    object, or an array whose last element is used; saved to Credentials.dat).
     """
-    creds = credentials(user)
-    return {'message': {'sessionid': ACCOUNTS.new_session(user), 'list': [creds]}}
+    return {'sessionid': ACCOUNTS.new_session(user)}
 
 
 @endpoint('/gbro/resources/user/registeruser/')

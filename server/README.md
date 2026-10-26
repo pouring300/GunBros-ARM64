@@ -49,9 +49,17 @@ and `capture.jsonl` (every request, passwords redacted).
 1. On first launch the bridge registers a Glu account (`registeruser`), as described above.
 2. Bridge patch P makes the game run its device-level login (`validateuser` with
    `userattribute: GLUSOCIALID`) after that, which the original game did through Facebook. The
-   reply (`message.message = {sessionid, list: [credentials]}`) gives it its client id, saved in
-   `Credentials.dat`.
-3. From then on requests carry `user.id`, so the server knows which player is asking.
+   reply's top-level `sessionid` is saved to `Session.dat` and `list` (credentials) to
+   `Credentials.dat`, which gives the game its client id.
+3. From then on requests carry `user.id` and `header.sessionid`, so the server knows which player
+   is asking. Later launches resume the saved session; if it's missing, the bridge runs the
+   device-level login again (it restores the account e-mail from `NgsLogin.dat` first, since the
+   game only knows it after a Glu login).
+
+Once the game has a client id it keeps the profile in `<clientid>_<store>` files instead of
+`-1_<store>`. It only migrates the offline `-1_*` files under some conditions, so a new account can
+start with an empty profile; copy the old files over with the client id rewritten (the id is
+stored just before each file's CRC).
 
 ## Friend codes
 
@@ -67,5 +75,4 @@ python3 server/ngs_server.py accounts                 # players, ids, friend cod
 python3 server/ngs_server.py befriend <id> <code>     # via the running server
 ```
 
-Still open: the game doesn't adopt the session id yet (`header.sessionid` stays empty), and
-`Session.dat` isn't written.
+Still open: `avatar/queryattributes` (friends' profile data for Brotherhood) is answered 404.
