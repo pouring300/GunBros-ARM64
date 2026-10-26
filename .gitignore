@@ -24,3 +24,7 @@ jadx_out/
 tools/
 third_party/dynarmic
 third_party/boost
+
+# Replacement NGS server runtime data (accounts, request captures)
+server/*.jsonl
+server/accounts.json*
