@@ -188,5 +188,20 @@
    email; UTF-16) converts its three UTF-16 strings and calls CGluSocialManager::CreateAccount. The Android
    port never shows the register dialog (CNGS_Platform::showDialogUserRegister is an empty stub). */
 #define GUEST_FN_NGS_REGISTER_SUBMITTED      0x0043289cu
+/* CApplet::m_App + 0x20: CHash of singletons, keyed by class id. CNGS is 0x7a23; its local user
+   (CNGSLocalUser, loaded from Credentials.dat) is at +0x18. */
+#define GUEST_OFF_APP_SINGLETONS             0x20u
+#define GUEST_SINGLETON_NGS                  0x7a23u
+#define GUEST_OFF_NGS_LOCAL_USER             0x18u
+/* CGluSocialManager (singleton 0x363a14b7): +0x3c is the signed-in account's e-mail (CStrWChar:
+   vtable, magic, buffer, length), returned by CGluSocialInterface::getPlayerID. */
+#define GUEST_SINGLETON_GLU_SOCIAL           0x363a14b7u
+#define GUEST_OFF_GLU_SOCIAL_EMAIL           0x3cu
+#define GUEST_FN_GLU_SOCIAL_GET_PLAYER_ID    0x003ec580u  /* CGluSocialInterface::getPlayerID() */
+#define GUEST_FN_CSTRWCHAR_CONCATENATE_CHAR  0x001768c8u  /* CStrWChar::Concatenate(const char *) */
+#define GUEST_CSTRWCHAR_MAGIC                0x43735eb4u
+/* CNGSLocalUser::ValidateUser(network): continues the saved session, or logs in by the network's
+   user id (resources/user/validateuser/ with userattribute GLUSOCIALID for network 0). */
+#define GUEST_FN_NGS_LOCAL_USER_VALIDATE     0x00411a14u
 
 #endif // GUNBROS_GUEST_SYMBOLS_H

@@ -30,9 +30,12 @@ void game_hooks_refinery_unlock_chain(void);
 
 /**
  * Called every frame. When Glu's backend is redirected to a replacement server
- * (debug.gunbros.ngs_host) and no Credentials.dat exists yet, create a Glu account
- * with a generated user name and password once the main menu is up, by calling
- * the game's own register-dialog handler (the Android port never shows that dialog).
+ * (debug.gunbros.ngs_host), sign the player in once the main menu is up. The Android
+ * port never shows the game's Glu account dialogs (CNGS_Platform::showDialog* are empty
+ * stubs) and the original per-launch login went through Facebook, so the bridge calls the
+ * game's own handlers itself: on first launch it registers an account with a generated
+ * gamertag/password (saved to NgsLogin.dat next to the game's saves); on later launches,
+ * with Credentials.dat present, it runs the device-level login (CNGSLocalUser::ValidateUser).
  */
 void game_hooks_auto_register(void);
 
