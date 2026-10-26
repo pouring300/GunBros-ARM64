@@ -30,7 +30,7 @@ void game_hooks_refinery_unlock_chain(void);
 
 /**
  * Called every frame. When Glu's backend is redirected to a replacement server
- * (debug.gunbros.ngs_host), sign the player in once the main menu is up. The Android
+ * (ngs_config.h), sign the player in once the main menu is up. The Android
  * port never shows the game's Glu account dialogs (CNGS_Platform::showDialog* are empty
  * stubs) and the original per-launch login went through Facebook, so the bridge calls the
  * game's own handlers itself: on first launch it registers an account with a generated
@@ -63,6 +63,12 @@ void game_hooks_on_svc(uint32_t idx);
 
 /** Called every frame: show the "Add a Bro" popup when requested and act on its result. */
 void game_hooks_add_bro(void);
+
+/**
+ * Called every frame: once, ping the NGS server as soon as the game starts, so a host that
+ * sleeps when idle (as free hosting tiers often do) is awake before the game signs in.
+ */
+void game_hooks_ngs_warmup(void);
 
 GUNBROS_EXTERN_C_END
 

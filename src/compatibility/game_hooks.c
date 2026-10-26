@@ -8,12 +8,10 @@
 #include "gunbros/filesystem/path_mapper.h"
 #include "gunbros/compatibility/jni_textbox.h"
 #include "gunbros/platform/ngs_ext.h"
+#include "gunbros/platform/ngs_config.h"
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
-#ifdef __ANDROID__
-#include <sys/system_properties.h>
-#endif
 
 static uint32_t get_gunbros(void) {
     uint32_t app_ptr = 0, gunbros = 0;
@@ -146,14 +144,7 @@ void game_hooks_auto_register(void) {
     static int s_done = 0, s_menu_frames = 0;
     if (s_done) return;
 
-#ifdef __ANDROID__
-    char host[PROP_VALUE_MAX] = {0};
-    __system_property_get("debug.gunbros.ngs_host", host);
-    if (host[0] == '\0') { s_done = 1; return; }
-#else
-    s_done = 1;
-    return;
-#endif
+    if (!ngs_config_enabled()) { s_done = 1; return; }
 
     uint32_t gunbros = get_gunbros(), gstate = 0;
     if (gunbros == 0) return;
@@ -228,14 +219,7 @@ void game_hooks_auto_register(void) {
 void game_hooks_ngs_profile_online(void) {
     static int s_done = 0;
     if (s_done) return;
-#ifdef __ANDROID__
-    char host[PROP_VALUE_MAX] = {0};
-    __system_property_get("debug.gunbros.ngs_host", host);
-    if (host[0] == '\0') { s_done = 1; return; }
-#else
-    s_done = 1;
-    return;
-#endif
+    if (!ngs_config_enabled()) { s_done = 1; return; }
 
     uint32_t gunbros = get_gunbros(), profile = 0, other = 0;
     uint8_t valid = 0, other_valid = 0, online = 0;
@@ -559,6 +543,19 @@ void game_hooks_add_bro(void) {
 
     default:
         break;
+    }
+}
+
+void game_hooks_ngs_warmup(void) {
+    static int s_state = 0;  /* 0: not started, 1: waiting for the reply, 2: done */
+    char reply[NGS_EXT_REPLY_MAX];
+    if (s_state == 2) return;
+    if (!ngs_config_enabled()) { s_state = 2; return; }
+    if (s_state == 0) {
+        if (ngs_ext_start("/gunbros/ping", "{}")) s_state = 1;
+    } else if (ngs_ext_poll(reply, sizeof(reply))) {
+        LOGI("[NGS] server %s", reply[0] ? "is up" : "didn't answer the warm-up ping");
+        s_state = 2;
     }
 }
 

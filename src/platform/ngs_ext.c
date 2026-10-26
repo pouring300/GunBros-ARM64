@@ -1,4 +1,5 @@
 #include "gunbros/platform/ngs_ext.h"
+#include "gunbros/platform/ngs_config.h"
 #include <netdb.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -8,9 +9,6 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
-#ifdef __ANDROID__
-#include <sys/system_properties.h>
-#endif
 
 #define NGS_EXT_TIMEOUT_S 5
 
@@ -22,19 +20,15 @@ static char s_body[512];
 static char s_reply[NGS_EXT_REPLY_MAX];
 
 static int connect_server(void) {
-    char host[92] = "", port[16] = "";
-#ifdef __ANDROID__
-    __system_property_get("debug.gunbros.ngs_host", host);
-    __system_property_get("debug.gunbros.ngs_port", port);
-#endif
-    if (host[0] == '\0') return -1;
-    if (port[0] == '\0') strcpy(port, "80");
+    char port[8];
+    if (!ngs_config_enabled()) return -1;
+    snprintf(port, sizeof(port), "%u", ngs_config_port());
 
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, port, &hints, &res) != 0 || !res) return -1;
+    if (getaddrinfo(ngs_config_host(), port, &hints, &res) != 0 || !res) return -1;
     int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (fd >= 0) {
         struct timeval tv = { NGS_EXT_TIMEOUT_S, 0 };
@@ -56,8 +50,9 @@ static void *request_thread(void *arg) {
     if (fd >= 0) {
         char req[1024];
         int n = snprintf(req, sizeof(req),
-                         "PUT %s HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",
-                         s_path, strlen(s_body), s_body);
+                         "PUT %s HTTP/1.0\r\nHost: %s\r\nContent-Type: application/json\r\n"
+                         "Content-Length: %zu\r\n\r\n%s",
+                         s_path, ngs_config_host(), strlen(s_body), s_body);
         if (n > 0 && n < (int)sizeof(req) && send(fd, req, (size_t)n, 0) == n) {
             char resp[2048];
             size_t got = 0;

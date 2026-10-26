@@ -7,8 +7,7 @@ GUNBROS_EXTERN_C_BEGIN
 
 /*
  * Requests to the replacement NGS server's extension endpoints (/gunbros/...), made by the
- * bridge itself rather than the game. The server is the one set with debug.gunbros.ngs_host
- * and debug.gunbros.ngs_port. Requests run on a background thread, one at a time: start one
+ * bridge itself rather than the game, to the server from ngs_config.h. Requests run on a background thread, one at a time: start one
  * with ngs_ext_start(), then poll ngs_ext_poll() each frame until it returns true.
  */
 #define NGS_EXT_REPLY_MAX 512

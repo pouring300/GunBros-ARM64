@@ -1,4 +1,5 @@
 #include "hle_internal.h"
+#include "gunbros/platform/ngs_config.h"
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/socket.h>
@@ -10,6 +11,7 @@
 #include <netdb.h>
 #include <errno.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -135,34 +137,77 @@ static int net_trace(void) {
     return s_trace;
 }
 
-// Optional redirect of Glu's backend (*.glu.com, normally blocked) to a replacement or
-// logging server, read once at the first lookup:
-//   adb shell setprop debug.gunbros.ngs_host 127.0.0.1   (host name or IPv4)
-//   adb shell setprop debug.gunbros.ngs_port 18080       (replaces port 80; optional)
+// Glu's backend (*.glu.com) is redirected to the replacement server from ngs_config.h, or
+// blocked if none is configured. Connections to it are marked so that the HTTP Host header can
+// be rewritten: the game still names Glu's host, and some hosting platforms route
+// requests by that header.
 typedef struct {
-    int enabled;
-    char host[92];      /* PROP_VALUE_MAX */
-    uint16_t port;      /* 0 = keep the original port */
-    uint32_t ip;        /* resolved address, network order; used to match connects */
+    uint32_t ip;        /* resolved server address, network order; used to match connects */
 } ngs_redirect_t;
+
+#define NGS_MAX_FDS 1024
+
+typedef struct {
+    bool active;        /* connected to the NGS server */
+    uint8_t *pending;   /* rewritten bytes not yet accepted by the socket */
+    size_t pending_len;
+} ngs_socket_t;
+
+static ngs_socket_t s_ngs_sockets[NGS_MAX_FDS];
 
 static ngs_redirect_t *ngs_redirect(void) {
     static ngs_redirect_t s_cfg;
-    static int s_loaded = 0;
-    if (!s_loaded) {
-        s_loaded = 1;
-#ifdef __ANDROID__
-        char port[PROP_VALUE_MAX] = {0};
-        __system_property_get("debug.gunbros.ngs_host", s_cfg.host);
-        __system_property_get("debug.gunbros.ngs_port", port);
-        s_cfg.enabled = s_cfg.host[0] != '\0';
-        s_cfg.port = (uint16_t)atoi(port);
-        if (s_cfg.enabled) {
-            LOGI("[NGS] redirecting *.glu.com to %s%s%s", s_cfg.host, port[0] ? " port " : "", port);
-        }
-#endif
-    }
     return &s_cfg;
+}
+
+static ngs_socket_t *ngs_socket(int fd) {
+    return (fd >= 0 && fd < NGS_MAX_FDS && s_ngs_sockets[fd].active) ? &s_ngs_sockets[fd] : NULL;
+}
+
+static void ngs_socket_reset(int fd) {
+    if (fd < 0 || fd >= NGS_MAX_FDS) return;
+    free(s_ngs_sockets[fd].pending);
+    memset(&s_ngs_sockets[fd], 0, sizeof(s_ngs_sockets[fd]));
+}
+
+/* Send what's left of a rewritten request. Returns false if some is still pending. */
+static bool ngs_flush(int fd, ngs_socket_t *s) {
+    while (s->pending_len > 0) {
+        ssize_t n = send(fd, s->pending, s->pending_len, 0);
+        if (n <= 0) return false;
+        memmove(s->pending, s->pending + n, s->pending_len - (size_t)n);
+        s->pending_len -= (size_t)n;
+    }
+    return true;
+}
+
+/* `data` with its "Host:" header line replaced by the server's, or NULL if it has none. */
+static uint8_t *ngs_rewrite_host(const uint8_t *data, size_t len, size_t *out_len) {
+    const uint8_t *end = data + len, *line = NULL;
+    for (const uint8_t *p = data; p + 6 <= end; p++) {
+        if ((p == data || p[-1] == '\n') && strncasecmp((const char *)p, "Host:", 5) == 0) {
+            line = p;
+            break;
+        }
+    }
+    if (!line) return NULL;
+    const uint8_t *eol = memchr(line, '\n', (size_t)(end - line));
+    if (!eol) return NULL;
+    eol++;
+    char header[128];
+    if (ngs_config_port() == 80) {
+        snprintf(header, sizeof(header), "Host: %s\r\n", ngs_config_host());
+    } else {
+        snprintf(header, sizeof(header), "Host: %s:%u\r\n", ngs_config_host(), ngs_config_port());
+    }
+    size_t hlen = strlen(header), before = (size_t)(line - data), after = (size_t)(end - eol);
+    uint8_t *out = malloc(before + hlen + after);
+    if (!out) return NULL;
+    memcpy(out, data, before);
+    memcpy(out + before, header, hlen);
+    memcpy(out + before + hlen, eol, after);
+    *out_len = before + hlen + after;
+    return out;
 }
 
 static const char *fmt_sockaddr(const struct sockaddr *sa, char *buf, size_t n) {
@@ -246,13 +291,14 @@ static void h_connect(hle_t *c) {
         return;
     }
     struct sockaddr_in redirected;
-    ngs_redirect_t *ngs = ngs_redirect();
-    if (ngs->enabled && ngs->port && addr && addr->sa_family == AF_INET && len >= (socklen_t)sizeof(redirected)) {
+    ngs_socket_reset(fd);
+    if (ngs_config_enabled() && addr && addr->sa_family == AF_INET && len >= (socklen_t)sizeof(redirected)) {
         const struct sockaddr_in *sin = (const struct sockaddr_in*)addr;
-        if (sin->sin_addr.s_addr == ngs->ip && ntohs(sin->sin_port) == 80) {
+        if (sin->sin_addr.s_addr == ngs_redirect()->ip && ntohs(sin->sin_port) == 80) {
             redirected = *sin;
-            redirected.sin_port = htons(ngs->port);
+            redirected.sin_port = htons(ngs_config_port());
             addr = (const struct sockaddr*)&redirected;
+            if (fd >= 0 && fd < NGS_MAX_FDS) s_ngs_sockets[fd].active = true;
         }
     }
     int ret = connect(fd, addr, len);
@@ -307,7 +353,32 @@ static void h_send(hle_t *c) {
         c->r0 = (uint32_t)-1;
         return;
     }
-    ssize_t ret = send(fd, buf, len, flags);
+    ngs_socket_t *ngs = ngs_socket(fd);
+    if (ngs && !ngs_flush(fd, ngs)) {
+        set_guest_errno(EAGAIN);
+        c->r0 = (uint32_t)-1;
+        return;
+    }
+    size_t rewritten_len = 0;
+    uint8_t *rewritten = (ngs && buf) ? ngs_rewrite_host(buf, len, &rewritten_len) : NULL;
+    ssize_t ret;
+    if (rewritten) {
+        /* The guest sees its own byte count; whatever the socket doesn't take now is sent
+           before anything else on this connection (here or in recv). */
+        ret = send(fd, rewritten, rewritten_len, flags);
+        if (ret >= 0) {
+            free(ngs->pending);
+            ngs->pending = rewritten;
+            ngs->pending_len = rewritten_len;
+            memmove(rewritten, rewritten + ret, rewritten_len - (size_t)ret);
+            ngs->pending_len -= (size_t)ret;
+            ret = (ssize_t)len;
+        } else {
+            free(rewritten);
+        }
+    } else {
+        ret = send(fd, buf, len, flags);
+    }
     if (ret < 0) {
         set_guest_errno(errno);
         c->r0 = (uint32_t)-1;
@@ -331,6 +402,12 @@ static void h_recv(hle_t *c) {
     void *buf = guest_to_host(g_buf);
     if (!buf && g_buf != 0 && len > 0) {
         set_guest_errno(EFAULT);
+        c->r0 = (uint32_t)-1;
+        return;
+    }
+    ngs_socket_t *ngs = ngs_socket(fd);
+    if (ngs && !ngs_flush(fd, ngs)) {
+        set_guest_errno(EAGAIN);
         c->r0 = (uint32_t)-1;
         return;
     }
@@ -632,12 +709,12 @@ static void h_gethostbyname(hle_t *c) {
     const char *lookup = host;
     int is_glu = strstr(host, "glu.com") != NULL;
     if (is_glu) {
-        if (!ngs_redirect()->enabled) {
+        if (!ngs_config_enabled()) {
             log_stub_call_once("gethostbyname:blocked_glu", c->lr, host);
             c->r0 = 0;
             return;
         }
-        lookup = ngs_redirect()->host;
+        lookup = ngs_config_host();
         LOGI("[NGS] '%s' -> %s", host, lookup);
     }
 
@@ -779,6 +856,7 @@ static void h_shutdown(hle_t *c) {
 
 static void h_close(hle_t *c) {
     int fd = (int)c->r0;
+    ngs_socket_reset(fd);
     if (fd >= 3) {
         int ret = close(fd);
         if (ret < 0) {

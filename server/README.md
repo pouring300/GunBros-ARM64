@@ -5,23 +5,65 @@ server time, Glu accounts, friends ("brothers"), messages, leaderboards and more
 gone. `ngs_server.py` is a small stand-in that answers the requests reverse-engineered so far and
 logs everything else, so the API can be mapped one request at a time.
 
-## Running it against a phone over USB
+## Pointing the game at a server
+
+The server the bridge uses is built in with two build settings (environment variables or `.env`):
 
 ```bash
-python3 server/ngs_server.py --port 18080
-adb reverse tcp:18080 tcp:18080
-adb shell setprop debug.gunbros.ngs_host 127.0.0.1
-adb shell setprop debug.gunbros.ngs_port 18080
-# restart the game
+GUNBROS_NGS_HOST=ngs.example.com ./build.sh   # host name or IPv4
+GUNBROS_NGS_PORT=18080 ./build.sh                               # optional, default 80
 ```
 
-With `debug.gunbros.ngs_host` set, the bridge resolves `*.glu.com` to that host instead of blocking
-it, and creates a Glu account automatically on first launch (the Android port never shows the
-game's register dialog). Unset it (`adb shell setprop debug.gunbros.ngs_host ""`) to go back to
-offline behaviour.
+With no host set the game stays offline, as it was with Glu's servers gone. With one, the bridge
+resolves `*.glu.com` to it, rewrites the HTTP `Host` header to it (some hosting platforms route
+by that header), pings it at startup to wake it, and creates a Glu account automatically on first
+launch (the Android port never shows the game's register dialog).
 
-Runtime files, next to the script: `accounts.json` (accounts; passwords stored as salted SHA-256)
-and `capture.jsonl` (every request, passwords redacted).
+For testing, system properties override the built-in server:
+
+```bash
+python3 server/ngs_server.py --port 18080 --capture server/capture.jsonl
+adb reverse tcp:18080 tcp:18080
+adb shell setprop debug.gunbros.ngs_host 127.0.0.1    # "off" forces offline
+adb shell setprop debug.gunbros.ngs_port 18080
+# restart the game; `adb shell setprop debug.gunbros.ngs_host ""` goes back to the built-in server
+```
+
+Runtime files, in `--data-dir` (default: next to the script): `accounts.json` (accounts; passwords
+stored as salted SHA-256) and `admin.token`. `--capture FILE` logs every request (passwords and
+private profile data removed) for debugging.
+
+## Hosting the server
+
+The server is a single Python 3 file with no dependencies, so it runs on almost any host: a small
+VM, a container, or a platform-as-a-service that runs Python.
+
+```bash
+python3 ngs_server.py --bind 0.0.0.0 --data-dir /path/to/persistent/storage
+```
+
+- **Port:** taken from `$PORT` (set by many hosting platforms), otherwise `--port`, default 18080.
+  The bridge connects on port 80 unless the APK is built with `GUNBROS_NGS_PORT`.
+- **Plain HTTP:** the game can't speak HTTPS, so the host must accept plain HTTP on that port
+  (turn off any "HTTPS only" redirect).
+- **Data:** `--data-dir` must survive restarts and redeploys; it holds `accounts.json` and
+  `admin.token`.
+- **Platform quirks the bridge already handles:** hosts that route requests by the HTTP `Host`
+  header (the bridge rewrites it to the server's name), and hosts that sleep when idle (the bridge
+  pings the server at startup to wake it).
+
+Build the APK with `GUNBROS_NGS_HOST=<server host name> ./build.sh`. On a test phone, clear any
+override first: `adb shell "setprop debug.gunbros.ngs_host ''"`.
+
+To move existing accounts to a new server, stop both servers, copy `accounts.json` into the new
+server's `--data-dir`, and start it again.
+
+Admin commands run on the host, with the same `--data-dir`: `accounts` lists players, and
+`befriend` (which talks to the running server, so it also needs `--port`) makes two players
+friends. Back up `accounts.json` from time to time.
+
+The host name is built into the APK, so moving to another host means a new APK unless the name
+stays the same; a domain of your own, pointed at the server, avoids that.
 
 ## Protocol notes
 

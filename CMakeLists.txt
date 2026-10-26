@@ -7,6 +7,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(BRIDGE_DEBUG "Enable bridge debug logging" OFF)
+
+# Replacement NGS server built into the bridge (see server/README.md); empty = offline.
+set(GUNBROS_NGS_HOST "" CACHE STRING "NGS server host name or IPv4 (empty: offline)")
+set(GUNBROS_NGS_PORT "" CACHE STRING "NGS server port (empty: 80)")
+add_compile_definitions(GUNBROS_NGS_HOST="${GUNBROS_NGS_HOST}" GUNBROS_NGS_PORT="${GUNBROS_NGS_PORT}")
 if(BRIDGE_DEBUG)
     add_compile_definitions(BRIDGE_DEBUG=1)
 endif()
@@ -35,6 +40,7 @@ set(GUNBROS_PLATFORM_SOURCES
     src/platform/android_audio.c
     src/platform/network_time.c
     src/platform/ngs_ext.c
+    src/platform/ngs_config.c
 )
 
 set(GUNBROS_COMPAT_SOURCES

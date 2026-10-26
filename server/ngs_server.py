@@ -9,13 +9,17 @@ Usage on the PC, with the phone on USB:
     adb shell setprop debug.gunbros.ngs_port 18080
     (restart the game)
 
+Hosted: python3 ngs_server.py --bind 0.0.0.0 --data-dir /path/to/persistent/storage
+(the port comes from $PORT). See README.md.
+
 Wire format (both directions), JSON over HTTP PUT:
     {"payload": [{"version": 1, "sequenceId": N, "message": {...}}]}
 Requests carry message.header {device, game, sessionid, mac, type}; replies are matched to
 requests by sequenceId. A reply message containing "errorcode" is treated as a failure; any other
 reply must contain "list" (the game reads it unconditionally).
 
-Every request is appended to capture.jsonl. Endpoints without a handler get 404.
+With --capture FILE, every request is appended to FILE (passwords and private profile data
+removed). Endpoints without a handler get 404.
 """
 import argparse
 import datetime
@@ -25,6 +29,7 @@ import os
 import secrets
 import threading
 import time
+from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HANDLERS = {}
@@ -371,16 +376,67 @@ def ext_addfriend(body):
     return {'ok': True, 'gamertag': friend['gamertag']} if friend else {'ok': False, 'error': err}
 
 
-# Endpoints used by the bridge's "Add a Bro" popup: plain JSON in, plain JSON out.
-EXT_HANDLERS = {'/gunbros/friendcode': ext_friendcode, '/gunbros/addfriend': ext_addfriend}
+def ext_ping(body):
+    return {'ok': True}
+
+
+# Endpoints used by the bridge itself: plain JSON in, plain JSON out.
+EXT_HANDLERS = {'/gunbros/friendcode': ext_friendcode, '/gunbros/addfriend': ext_addfriend,
+                '/gunbros/ping': ext_ping}
 ADMIN_TOKEN = None
+
+
+MAX_BODY = 64 * 1024
+REGISTRATIONS_PER_HOUR = 10  # per client address
+
+
+class RateLimiter:
+    """At most `limit` events per `window` seconds per key."""
+
+    def __init__(self, limit, window):
+        self.limit, self.window = limit, window
+        self.events = defaultdict(deque)
+        self.lock = threading.Lock()
+
+    def allow(self, key):
+        now = time.monotonic()
+        with self.lock:
+            q = self.events[key]
+            while q and now - q[0] > self.window:
+                q.popleft()
+            if len(q) >= self.limit:
+                return False
+            q.append(now)
+            return True
+
+
+REGISTRATIONS = RateLimiter(REGISTRATIONS_PER_HOUR, 3600)
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'GunBrosNGS/0.1'
 
+    def _client(self):
+        # Behind a reverse proxy or a hosting platform's front end, the client is the first forwarded address.
+        forwarded = self.headers.get('X-Forwarded-For', '')
+        return forwarded.split(',')[0].strip().rsplit(':', 1)[0] if forwarded else self.client_address[0]
+
+    def _reply(self, status, data=b''):
+        self.send_response(status)
+        if data:
+            self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _handle(self):
-        length = int(self.headers.get('Content-Length') or 0)
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_BODY:
+            self._reply(413)
+            return
         raw = self.rfile.read(length) if length else b''
         try:
             body = json.loads(raw.decode('utf-8')) if raw else None
@@ -390,15 +446,12 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         if path in EXT_HANDLERS:
             result = EXT_HANDLERS[path](body if isinstance(body, dict) else {})
-            print(f"{datetime.datetime.now().isoformat(timespec='milliseconds')} {path} {json.dumps(body)} -> {json.dumps(result)}", flush=True)
-            data = json.dumps(result).encode()
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            print(f"{datetime.datetime.now().isoformat(timespec='milliseconds')} {path} -> {json.dumps(result)}", flush=True)
+            self._reply(200, json.dumps(result).encode())
             return
         handler = HANDLERS.get(path)
+        if handler is register_user and not REGISTRATIONS.allow(self._client()):
+            handler = lambda message: error(1, 'too many new accounts, try again later')
         reply = None
         if handler and isinstance(body, dict) and body.get('payload'):
             replies = []
@@ -417,8 +470,9 @@ class Handler(BaseHTTPRequestHandler):
         record = {'time': stamp, 'method': self.command, 'path': self.path,
                   'headers': dict(self.headers), 'body': redacted(body) if body is not None else raw.decode('latin-1'),
                   'reply': reply}
-        with open(self.server.capture_path, 'a') as f:
-            f.write(json.dumps(record) + '\n')
+        if self.server.capture_path:
+            with open(self.server.capture_path, 'a') as f:
+                f.write(json.dumps(record) + '\n')
 
         msg = (body or {}).get('payload', [{}])[0].get('message', {}) if isinstance(body, dict) else {}
         msg_type = msg.get('header', {}).get('type', '?') if isinstance(msg, dict) else '?'
@@ -426,16 +480,9 @@ class Handler(BaseHTTPRequestHandler):
         print(f'{stamp} {self.command} {path} type={msg_type} -> {status}', flush=True)
 
         if reply is None:
-            self.send_response(404)
-            self.send_header('Content-Length', '0')
-            self.end_headers()
+            self._reply(404)
             return
-        data = json.dumps(reply, separators=(',', ':')).encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        self._reply(200, json.dumps(reply, separators=(',', ':')).encode())
 
     do_GET = do_POST = do_PUT = do_DELETE = _handle
 
@@ -446,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
 def cli(args):
     """Small admin commands. `befriend` goes through the running server so its state stays in sync."""
     if args.command == 'accounts':
-        accounts = Accounts(os.path.join(os.path.dirname(os.path.abspath(args.out)), 'accounts.json'))
+        accounts = Accounts(os.path.join(args.data_dir, 'accounts.json'))
         for u in sorted(accounts.data['users'].values(), key=lambda u: u['id']):
             print(f"{u['id']:>6}  {u['code']}  {u['gamertag']:<20} friends={u.get('friends', [])}")
     elif args.command == 'befriend':
@@ -460,7 +507,7 @@ def cli(args):
 
 
 def admin_token_path(args):
-    return os.path.join(os.path.dirname(os.path.abspath(args.out)), 'admin.token')
+    return os.path.join(args.data_dir, 'admin.token')
 
 
 def main():
@@ -469,21 +516,27 @@ def main():
                     help='serve (default); accounts: list players and friend codes; '
                          'befriend <player id> <friend code>: make two players friends')
     ap.add_argument('params', nargs='*')
-    ap.add_argument('--port', type=int, default=18080)
-    ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'capture.jsonl'))
+    ap.add_argument('--bind', default='127.0.0.1', help='address to listen on (0.0.0.0 when hosted)')
+    ap.add_argument('--port', type=int, default=int(os.environ.get('PORT', 18080)),
+                    help='port to listen on (default: $PORT, else 18080)')
+    ap.add_argument('--data-dir', default=os.path.dirname(os.path.abspath(__file__)),
+                    help='where accounts.json and admin.token live (default: next to this script)')
+    ap.add_argument('--capture', metavar='FILE', help='append every request to FILE (debugging)')
     args = ap.parse_args()
     if args.command != 'serve':
         return cli(args)
     global ACCOUNTS
-    ACCOUNTS = Accounts(os.path.join(os.path.dirname(os.path.abspath(args.out)), 'accounts.json'))
+    os.makedirs(args.data_dir, exist_ok=True)
+    ACCOUNTS = Accounts(os.path.join(args.data_dir, 'accounts.json'))
     global ADMIN_TOKEN
     ADMIN_TOKEN = secrets.token_hex(16)
     fd = os.open(admin_token_path(args), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w') as f:
         f.write(ADMIN_TOKEN + '\n')
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
-    server.capture_path = args.out
-    print(f'NGS stand-in on 127.0.0.1:{args.port}, capturing to {args.out}; handlers: {sorted(HANDLERS)}', flush=True)
+    server = ThreadingHTTPServer((args.bind, args.port), Handler)
+    server.capture_path = args.capture
+    print(f'NGS stand-in on {args.bind}:{args.port}, data in {args.data_dir}'
+          f'{", capturing to " + args.capture if args.capture else ""}', flush=True)
     server.serve_forever()
 
 

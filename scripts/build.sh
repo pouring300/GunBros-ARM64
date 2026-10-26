@@ -23,6 +23,8 @@ else
     echo "  Bridge Debug: DISABLED (Release)"
 fi
 
+echo "  NGS server: ${GUNBROS_NGS_HOST:-(none, offline)}${GUNBROS_NGS_PORT:+ port $GUNBROS_NGS_PORT}"
+
 echo "=== [GunBros Build] Starting ARM64 NDK CMake Build ==="
 echo "  NDK:      $NDK"
 echo "  CMake:    $CMAKE_BIN"
@@ -36,6 +38,8 @@ echo "  Boost:    $BOOST_ROOT"
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=OFF \
   $BRIDGE_DEBUG_FLAG \
+  -DGUNBROS_NGS_HOST="${GUNBROS_NGS_HOST:-}" \
+  -DGUNBROS_NGS_PORT="${GUNBROS_NGS_PORT:-}" \
   -DDYNARMIC_ROOT="$DYNARMIC_ROOT" \
   -DBOOST_ROOT="$BOOST_ROOT" \
   -S "$PROJECT_ROOT"
