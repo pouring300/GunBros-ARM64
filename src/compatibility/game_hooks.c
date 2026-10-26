@@ -4,6 +4,35 @@
 #include "gunbros/emulator/dynarmic_backend.h"
 #include "gunbros/emulator/hle_dispatcher.h"
 #include "gunbros/platform/android_window.h"
+#include "gunbros/platform/network_time.h"
+#include <string.h>
+
+static uint32_t get_gunbros(void) {
+    uint32_t app_ptr = 0, gunbros = 0;
+    guest_mem_read(GUEST_ADDR_APP_PTR, &app_ptr, 4);
+    if (app_ptr == 0) return 0;
+    guest_mem_read(app_ptr + GUEST_OFF_APP_GUNBROS, &gunbros, 4);
+    return gunbros;
+}
+
+void game_hooks_seed_network_time(void) {
+    uint32_t gunbros = get_gunbros(), profile_mgr = 0, session = 0;
+    if (gunbros == 0) return;
+    guest_mem_read(gunbros + GUEST_OFF_GB_PROFILE_MGR, &profile_mgr, 4);
+    if (profile_mgr == 0) return;
+    guest_mem_read(profile_mgr + GUEST_OFF_PROFILE_SESSION, &session, 4);
+    if (session == 0) return;
+
+    uint64_t now_ms = 0;
+    guest_mem_read(session + GUEST_OFF_SESSION_TIME_NOW_MS, &now_ms, 8);
+    if (now_ms != 0) return;
+
+    now_ms = network_time_now_ms();
+    if (now_ms == 0) return;  /* NTP query still in flight */
+    guest_mem_write(session + GUEST_OFF_SESSION_TIME_START_MS, &now_ms, 8);
+    guest_mem_write(session + GUEST_OFF_SESSION_TIME_NOW_MS, &now_ms, 8);
+    LOGI("Seeded network time: %llu ms (session=0x%x)", (unsigned long long)now_ms, session);
+}
 
 void game_hooks_on_touch_ended(int x, int y) {
     (void)y;

@@ -33,6 +33,7 @@ set(GUNBROS_PLATFORM_SOURCES
     src/platform/jni_env_helper.c
     src/platform/android_window.c
     src/platform/android_audio.c
+    src/platform/network_time.c
 )
 
 set(GUNBROS_COMPAT_SOURCES

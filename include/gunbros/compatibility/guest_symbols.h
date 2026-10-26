@@ -88,6 +88,10 @@
 #define GUEST_OFF_RESLOADER_CURRENT       14u   /* ResourceLoader -> current */
 #define GUEST_OFF_GB_MENUSYS              4u    /* GunBros -> m_pMenuSystem */
 #define GUEST_OFF_GB_GSTATE               320u  /* GunBros -> m_gameState */
+#define GUEST_OFF_GB_PROFILE_MGR          0x48u /* GunBros -> CProfileManager* */
+#define GUEST_OFF_PROFILE_SESSION         0x64u /* CProfileManager -> CNGSSession* */
+#define GUEST_OFF_SESSION_TIME_START_MS   0x28u /* CNGSSession -> network time base (u64 ms) */
+#define GUEST_OFF_SESSION_TIME_NOW_MS     0x30u /* CNGSSession -> network time now (u64 ms, 0 = invalid) */
 #define GUEST_OFF_MENU_TOP                256u  /* MenuSystem -> m_pTopMenu */
 
 /* ========================================================================= */
