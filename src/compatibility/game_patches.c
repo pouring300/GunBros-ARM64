@@ -75,6 +75,9 @@ static const game_patch_entry_t s_game_patches[] = {
     /* Patch O: run CGunBros::UpdateOnlineStatus without a Glu NGS profile (bl IsProfileValid -> mov r0, 1) */
     { GUEST_PATCH_ONLINE_STATUS_UPDATE,    true, 0xeb02844c, 0xe3a00001, 4, "UpdateOnlineStatus online mov r0, 1" },
     { GUEST_PATCH_ONLINE_STATUS_POLL,      true, 0xeb02726e, 0xe3a00001, 4, "CGunBros::Update online mov r0, 1" },
+
+    /* Patch P: validate the local user after a Glu account login (bl isValid -> mov r0, 0) */
+    { GUEST_PATCH_POST_LOGIN_VALIDATE,     true, 0xebffebff, 0xe3a00000, 4, "handlePostUserLogin validate mov r0, 0" },
 };
 
 const game_patch_entry_t* game_patches_get_table(size_t *count) {

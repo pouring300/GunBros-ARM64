@@ -167,6 +167,13 @@
 #define GUEST_PATCH_ONLINE_STATUS_UPDATE     0x002b7a88u  /* in CGunBros::UpdateOnlineStatus */
 #define GUEST_PATCH_ONLINE_STATUS_POLL       0x002bc200u  /* in CGunBros::Update */
 
+/* Patch P: after a Glu account login, CNGSSocialInterface::handlePostUserLogin only calls
+   CNGSLocalUser::ValidateUser (which gets the client id and session, and writes Credentials.dat /
+   Session.dat) if the local user isn't "valid" yet. Any successful NGS reply (e.g. server time)
+   marks it valid, so it took the AssociateUser branch and the game never got an id. The original
+   game validated through the (now dead) Facebook login instead. Always validate here. */
+#define GUEST_PATCH_POST_LOGIN_VALIDATE      0x00429ec0u  /* bl CNGSServerObject::isValid */
+
 /* Refinery: Premium/Standard slot chain (slot N unlocks after collecting from gate[N]) */
 #define GUEST_OFF_GB_REFINERY                0x18u   /* GunBros -> CRefinementManager* */
 #define GUEST_OFF_REFINERY_GATE              200u    /* u8[12]: slot that must be collected first */
