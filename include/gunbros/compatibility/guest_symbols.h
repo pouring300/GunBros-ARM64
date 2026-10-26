@@ -95,6 +95,11 @@
 #define GUEST_OFF_SERVER_OBJECT_VALID     0x04u
 #define GUEST_OFF_PROFILE_SERVER_OBJ      0x48u
 #define GUEST_OFF_PROFILE_ONLINE          0xe0u
+/* One sync-status byte per data store 1000..1019 (saved as <clientid>_PDST). */
+#define GUEST_OFF_PROFILE_STORE_STATUS    0xccu
+#define GUEST_PROFILE_STORE_COUNT         20
+#define GUEST_PROFILE_STORE_CHANGED       1u
+#define GUEST_PROFILE_STORE_LOAD_FROM_SERVER 4u
 #define GUEST_OFF_SESSION_TIME_START_MS   0x28u /* CNGSSession -> network time base (u64 ms) */
 #define GUEST_OFF_SESSION_TIME_NOW_MS     0x30u /* CNGSSession -> network time now (u64 ms, 0 = invalid) */
 #define GUEST_OFF_MENU_TOP                256u  /* MenuSystem -> m_pTopMenu */

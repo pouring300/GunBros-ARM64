@@ -248,6 +248,17 @@ void game_hooks_ngs_profile_online(void) {
     /* CProfileManager::LoginInitResourceLoaderCallback sets this flag at startup when the account
        is already signed in; ours signs in later, so set it the same way once it is. */
     s_done = 1;
+
+    /* The save files are the only copy of the player's progress; the server only keeps what
+       friends see. Data stores waiting to be reloaded from the server (status 4) would never be
+       uploaded, so mark them as changed locally (1) instead. */
+    uint8_t status[GUEST_PROFILE_STORE_COUNT];
+    guest_mem_read(profile + GUEST_OFF_PROFILE_STORE_STATUS, status, sizeof(status));
+    for (int i = 0; i < GUEST_PROFILE_STORE_COUNT; i++) {
+        if (status[i] == GUEST_PROFILE_STORE_LOAD_FROM_SERVER) status[i] = GUEST_PROFILE_STORE_CHANGED;
+    }
+    guest_mem_write(profile + GUEST_OFF_PROFILE_STORE_STATUS, status, sizeof(status));
+
     guest_mem_read(profile + GUEST_OFF_PROFILE_ONLINE, &online, 1);
     if (online) return;
     online = 1;

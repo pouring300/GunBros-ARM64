@@ -54,6 +54,10 @@ class Accounts:
             for user in self.data['users'].values():
                 user.setdefault('code', self._new_code())
                 user.setdefault('friends', [])
+                # Drop anything stored before only public attributes were kept.
+                avatar = {t: {n: a for n, a in attrs.items() if is_public_attribute(a)}
+                          for t, attrs in user.get('avatar', {}).items()}
+                user['avatar'] = {t: attrs for t, attrs in avatar.items() if attrs}
             self._save()
 
     def _new_code(self):
@@ -146,13 +150,12 @@ class Accounts:
             self._save()
 
     def save_avatar_attributes(self, user, attrs):
-        """Store avatar attributes by collection type and name, replacing older values."""
+        """Store the public avatar attributes (see is_public_attribute), replacing older values."""
         with self.lock:
             store = user.setdefault('avatar', {})
             for a in attrs:
-                if a.get('name') is None:
-                    continue
-                store.setdefault(str(a.get('collectiontype', 0)), {})[a['name']] = a
+                if is_public_attribute(a):
+                    store.setdefault(str(a['collectiontype']), {})[a['name']] = a
             self._save()
 
     def avatar_attributes(self, user, collection_types):
@@ -262,6 +265,35 @@ def message_poll(message):
     return {'list': {}}
 
 
+# The game is played offline and its save files stay the only copy of a player's progress: the
+# server is not a cloud save. It keeps only what friends are shown in Brotherhood (level and
+# loadout) and never sends a player's own data back to them.
+PUBLIC_ATTRIBUTES = {
+    1000: lambda name: name in ('gbLevel', 'gbExperience'),   # player progress
+    1001: lambda name: name.startswith('gbPlayCfg'),          # loadout: character, guns, armor
+}
+
+
+# CPlayerProgress::LoadFromServer rejects a friend's progress unless every one of these is present,
+# so the private ones are sent as zeros: (name, type) as the game saves them.
+PROGRESS_PLACEHOLDERS = [('gbFirstLaunch', 1), ('gbExplodium', 4), ('gbCurrencyCommon', 4),
+                         ('gbCurrencyRare', 3), ('gbXPBonusTimestamp', 3), ('gbXPBonusQuantity', 3),
+                         ('gbPushChallenges', 1), ('gbExperience', 4), ('gbLevel', 2)]
+
+
+def with_placeholders(attrs, collection_types):
+    if 1000 not in collection_types:
+        return attrs
+    have = {a['name'] for a in attrs if a.get('collectiontype') == 1000}
+    return attrs + [{'name': n, 'type': t, 'collectiontype': 1000, 'intValue': 0}
+                    for n, t in PROGRESS_PLACEHOLDERS if n not in have]
+
+
+def is_public_attribute(attr):
+    check = PUBLIC_ATTRIBUTES.get(attr.get('collectiontype'))
+    return bool(check and isinstance(attr.get('name'), str) and check(attr['name']))
+
+
 def avatar_owner(message):
     """The account a resources/avatar/* request is about (its avatar id is the account id)."""
     avatar_id = message.get('registeravatar', {}).get('id', message.get('user', {}).get('id'))
@@ -272,7 +304,7 @@ def avatar_owner(message):
 def avatar_save_attributes(message):
     # CAttributeManager::saveDataToServer: the player's profile data, as
     # {"avatarattributes": [{name, type, collectiontype, stringValue | intValue}, ...]}.
-    # Only the signed-in player may change their own data.
+    # Only the public part is kept, and only the signed-in player may change their own.
     user = avatar_owner(message)
     caller = ACCOUNTS.by_session(message.get('header', {}).get('sessionid'))
     if user is None or caller is None or caller['id'] != user['id']:
@@ -287,9 +319,13 @@ def avatar_query_attributes(message):
     # ({"avatarattributes": [{"collectiontype": N}, ...]}); the reply's "list" is an array of
     # attribute objects in the same form they were saved in (CAttributeManager::
     # extractAttributeValuesAsArray). Friends' data is read this way for Brotherhood.
+    # Only friends' data is returned: a player's own data stays on their phone.
     user = avatar_owner(message)
-    types = [a.get('collectiontype') for a in message.get('avatarattributes', [])]
-    attrs = ACCOUNTS.avatar_attributes(user, types) if user else []
+    caller = ACCOUNTS.by_session(message.get('header', {}).get('sessionid'))
+    attrs = []
+    if user and caller and user['id'] in caller.get('friends', []):
+        types = [a.get('collectiontype') for a in message.get('avatarattributes', [])]
+        attrs = with_placeholders(ACCOUNTS.avatar_attributes(user, types), types)
     return {'list': attrs if attrs else {}}
 
 
