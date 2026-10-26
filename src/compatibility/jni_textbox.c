@@ -396,6 +396,26 @@ bool jni_textbox_read_text(uint32_t handle, char *out, size_t out_size) {
     return ok;
 }
 
+bool jni_textbox_set_hint(uint32_t handle, const char *hint) {
+    bool ok = false;
+    pthread_mutex_lock(&s_textbox_mutex);
+    int slot = get_slot_by_handle(handle);
+    JNIEnv *env = slot >= 0 && s_textboxes[slot].real_obj ? platform_get_env() : NULL;
+    jclass cls = env ? get_glu_textbox_class(env) : NULL;
+    /* GluTextBox.SetText(text, hint) sets the EditText's text and its hint. */
+    jmethodID mid = cls ? (*env)->GetMethodID(env, cls, "SetText", "(Ljava/lang/String;Ljava/lang/String;)V") : NULL;
+    if (mid) {
+        jstring j_text = (*env)->NewStringUTF(env, "");
+        jstring j_hint = (*env)->NewStringUTF(env, hint);
+        (*env)->CallVoidMethod(env, s_textboxes[slot].real_obj, mid, j_text, j_hint);
+        (*env)->DeleteLocalRef(env, j_text);
+        (*env)->DeleteLocalRef(env, j_hint);
+        ok = true;
+    }
+    pthread_mutex_unlock(&s_textbox_mutex);
+    return ok;
+}
+
 bool jni_method_textbox_remove_text_view(const jni_call_context_t *ctx) {
     uint32_t handle = *ctx->r1;
     LOGI("[GluTextBox:RemoveTextView] handle=0x%x", handle);

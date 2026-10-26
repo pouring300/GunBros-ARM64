@@ -279,6 +279,7 @@ enum {
 
 static int s_add_bro_state = ADD_BRO_IDLE;
 static uint32_t s_add_bro_popup = 0;    /* our CAndroidSearchPopup while it is shown */
+static bool s_add_bro_hint_set = false; /* its text field shows the "enter a code" hint */
 static uint32_t s_add_bro_message = 0;  /* our CAndroidMessagePopup while it is shown */
 static char s_add_bro_code[32];
 static uint32_t s_friends_menu = 0;       /* the CMenuFriends the banner was tapped on */
@@ -487,8 +488,11 @@ void game_hooks_add_bro(void) {
         if (!ngs_ext_poll(reply, sizeof(reply))) break;
         char code[32];
         if (ngs_ext_json_string(reply, "code", code, sizeof(code))) {
-            snprintf(text, sizeof(text), "Your code: %s", code);
+            /* The popup's title is the only label it has (one line, no wrapping), so the field's
+               hint explains what to type. */
+            snprintf(text, sizeof(text), "Your friend code: %s", code);
             show_add_bro_popup(text);
+            s_add_bro_hint_set = false;
             s_add_bro_state = ADD_BRO_SHOWN;
         } else {
             show_add_bro_message("Add a Bro", "Can't reach the Gun Bros server.");
@@ -498,6 +502,12 @@ void game_hooks_add_bro(void) {
     }
 
     case ADD_BRO_SHOWN:
+        if (!s_add_bro_hint_set && s_add_bro_popup) {
+            uint32_t field = 0, handle = 0;
+            guest_mem_read(s_add_bro_popup + GUEST_OFF_SEARCH_POPUP_FIELD, &field, 4);
+            if (field) guest_mem_read(field + GUEST_OFF_TEXT_FIELD_OBJECT, &handle, 4);
+            if (handle) s_add_bro_hint_set = jni_textbox_set_hint(handle, "Enter a friend's code");
+        }
         /* Closed some other way (e.g. back key): forget it. */
         if (s_add_bro_popup != 0 && current_mid_popup() != s_add_bro_popup) {
             s_add_bro_popup = 0;

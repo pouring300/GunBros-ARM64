@@ -21,6 +21,9 @@ uint32_t jni_textbox_get_string_ptr(uint32_t str_obj);
 /* Read a text box's current text (UTF-8) from the bridge, e.g. while handling a game hook. */
 bool jni_textbox_read_text(uint32_t handle, char *out, size_t out_size);
 
+/* Clear a text box and show `hint` (grey placeholder text) in it. */
+bool jni_textbox_set_hint(uint32_t handle, const char *hint);
+
 /* JNI Dispatch method handlers */
 bool jni_method_textbox_set_bounds(const jni_call_context_t *ctx);
 bool jni_method_textbox_set_visible(const jni_call_context_t *ctx);
