@@ -38,10 +38,20 @@ and `capture.jsonl` (every request, passwords redacted).
 |---|---|
 | `resources/user/getnettime2` | `list` = server time in ms |
 | `resources/user/registeruser/` | creates the account |
-| `resources/user/validateuser/` | logs in (not yet reached by the game) |
+| `resources/user/validateuser/` | logs in; the device-level login (by `GLUSOCIALID`) returns the session and credentials, giving the game its client id |
 | `resources/user/attributes/` | stores user attributes |
 | `resources/friend/search` | friends list, currently always empty |
+| `resources/message/poll` | inbox, currently always empty |
 | everything else | logged, answered 404 |
 
-Open problem: the game doesn't receive its account id or a session after registering
-(`Credentials.dat` keeps `clientid: -1`), so later requests can't yet be tied to a player.
+## Login flow
+
+1. On first launch the bridge registers a Glu account (`registeruser`), as described above.
+2. Bridge patch P makes the game run its device-level login (`validateuser` with
+   `userattribute: GLUSOCIALID`) after that, which the original game did through Facebook. The
+   reply (`message.message = {sessionid, list: [credentials]}`) gives it its client id, saved in
+   `Credentials.dat`.
+3. From then on requests carry `user.id`, so the server knows which player is asking.
+
+Still open: the game doesn't adopt the session id yet (`header.sessionid` stays empty), and
+`Session.dat` isn't written.

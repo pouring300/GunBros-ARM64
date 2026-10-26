@@ -128,8 +128,8 @@ def error(code, text='error'):
 def session_reply(user):
     """Reply body shared by register/validate.
 
-    Two login chains use these endpoints: CGluSocialManager reads the top-level "list"
-    (registration: a string it compares with the e-mail; validation: a credentials object),
+    Two login chains use these endpoints: CGluSocialManager reads the top-level "gamertag"
+    (registration) or "list" (validation, a credentials object),
     while CNGSLocalUser reads /payload/0/message/message = {"sessionid", "list": [credentials]}
     and writes Credentials.dat and Session.dat from it.
     """
@@ -144,16 +144,26 @@ def register_user(message):
     if user is None:
         return error(1)
     reply = session_reply(user)
-    reply['list'] = user['email']
+    # CGluSocialManager::HandleCreateAccountResponse compares reply "gamertag" with the name it
+    # registered.
+    reply['gamertag'] = user['gamertag']
+    reply['list'] = credentials(user)
     return reply
 
 
 @endpoint('/gbro/resources/user/validateuser/')
 def validate_user(message):
-    u = message.get('user', {})
-    user = ACCOUNTS.validate(u.get('gamertag') or u.get('email'), u.get('password'))
+    attr = message.get('userattribute')
+    if attr:
+        # CNGSLocalUser::ValidateUser (device-level login after a social login) identifies the
+        # player by a social-network attribute, e.g. GLUSOCIALID = the account's e-mail.
+        user = ACCOUNTS.find(email=attr.get('stringValue')) if attr.get('attributeName') == 'GLUSOCIALID' else None
+    else:
+        # CGluSocialManager::ValidateUser: gamertag/e-mail and password.
+        u = message.get('user', {})
+        user = ACCOUNTS.validate(u.get('gamertag') or u.get('email'), u.get('password'))
     if user is None:
-        return error(1)
+        return error(1, 'unknown user')
     reply = session_reply(user)
     reply['list'] = credentials(user)
     return reply
@@ -180,6 +190,12 @@ def friend_search(message):
     # CNGSLocalUser::UpdateFriendListFromServer: {"brother": {"brother": {"email": "@"}, "status": 1,
     # "items": 1024, ...}} loads the friends ("brothers") list. No friends system yet: empty list.
     # (A 404 here sends the game down an error path that jumps to a bad address.)
+    return {'list': {}}
+
+
+@endpoint('/gbro/resources/message/poll')
+def message_poll(message):
+    # Inbox check ({"user": {"id": N}}), sent after login. No messaging yet: nothing new.
     return {'list': {}}
 
 
