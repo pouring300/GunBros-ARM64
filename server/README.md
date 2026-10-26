@@ -42,6 +42,8 @@ and `capture.jsonl` (every request, passwords redacted).
 | `resources/user/attributes/` | stores user attributes |
 | `resources/friend/search` | the player's friends ("brothers") as credentials objects |
 | `resources/message/poll` | inbox, currently always empty |
+| `resources/avatar/avatarattributes` | stores the player's profile data (only their own) |
+| `resources/avatar/queryattributes` | returns a player's stored profile data, e.g. friends' level and loadout for Brotherhood |
 | everything else | logged, answered 404 |
 
 ## Login flow
@@ -75,4 +77,13 @@ python3 server/ngs_server.py accounts                 # players, ids, friend cod
 python3 server/ngs_server.py befriend <id> <code>     # via the running server
 ```
 
-Still open: `avatar/queryattributes` (friends' profile data for Brotherhood) is answered 404.
+## Profile data
+
+The game keeps its profile in data stores (`<clientid>_1000` ... `_1019`), and each store's sync
+status in `<clientid>_PDST` (one byte per store: 1 = changed locally, 2 = in sync, 4 = load from
+the server first). When the profile is online, `CProfileManager::Save` uploads changed stores as
+attribute lists (`{name, type, collectiontype, stringValue | intValue}`, collection type = store
+number) and marks them 2. Stores in state 4 are never uploaded; the game only reloads them at
+startup, before the bridge has signed in. For an existing save, set its statuses to 1 to upload it.
+
+Still open: stores in state 4 on a new account, and what Brotherhood shows from friends' data.

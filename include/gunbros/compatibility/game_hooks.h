@@ -39,6 +39,13 @@ void game_hooks_refinery_unlock_chain(void);
  */
 void game_hooks_auto_register(void);
 
+/**
+ * Called every frame. Once the NGS sign-in has completed, mark the profile online
+ * (CProfileManager +0xe0), so the game syncs profile data with the server
+ * (CProfileManager::IsProfileValid). The game only does this at startup.
+ */
+void game_hooks_ngs_profile_online(void);
+
 GUNBROS_EXTERN_C_END
 
 #endif // GUNBROS_GAME_HOOKS_H

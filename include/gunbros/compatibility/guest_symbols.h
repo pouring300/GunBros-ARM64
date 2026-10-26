@@ -90,6 +90,11 @@
 #define GUEST_OFF_GB_GSTATE               320u  /* GunBros -> m_gameState */
 #define GUEST_OFF_GB_PROFILE_MGR          0x48u /* GunBros -> CProfileManager* */
 #define GUEST_OFF_PROFILE_SESSION         0x64u /* CProfileManager -> CNGSSession* */
+/* CProfileManager derives from CNGSLocalUser (CNGSServerObject: +4 = isValid). +0x48 is a second
+   server object that IsProfileValid also requires; +0xe0 is the "profile online" flag. */
+#define GUEST_OFF_SERVER_OBJECT_VALID     0x04u
+#define GUEST_OFF_PROFILE_SERVER_OBJ      0x48u
+#define GUEST_OFF_PROFILE_ONLINE          0xe0u
 #define GUEST_OFF_SESSION_TIME_START_MS   0x28u /* CNGSSession -> network time base (u64 ms) */
 #define GUEST_OFF_SESSION_TIME_NOW_MS     0x30u /* CNGSSession -> network time now (u64 ms, 0 = invalid) */
 #define GUEST_OFF_MENU_TOP                256u  /* MenuSystem -> m_pTopMenu */

@@ -145,6 +145,21 @@ class Accounts:
                     store[name] = {k: v for k, v in a.items() if k != 'attributeName'}
             self._save()
 
+    def save_avatar_attributes(self, user, attrs):
+        """Store avatar attributes by collection type and name, replacing older values."""
+        with self.lock:
+            store = user.setdefault('avatar', {})
+            for a in attrs:
+                if a.get('name') is None:
+                    continue
+                store.setdefault(str(a.get('collectiontype', 0)), {})[a['name']] = a
+            self._save()
+
+    def avatar_attributes(self, user, collection_types):
+        with self.lock:
+            store = user.get('avatar', {})
+            return [a for t in collection_types for a in store.get(str(t), {}).values()]
+
     def validate(self, name, password):
         with self.lock:
             user = self.data['users'].get((name or '').lower())
@@ -245,6 +260,37 @@ def friend_search(message):
 def message_poll(message):
     # Inbox check ({"user": {"id": N}}), sent after login. No messaging yet: nothing new.
     return {'list': {}}
+
+
+def avatar_owner(message):
+    """The account a resources/avatar/* request is about (its avatar id is the account id)."""
+    avatar_id = message.get('registeravatar', {}).get('id', message.get('user', {}).get('id'))
+    return ACCOUNTS.by_id(avatar_id)
+
+
+@endpoint('/gbro/resources/avatar/avatarattributes')
+def avatar_save_attributes(message):
+    # CAttributeManager::saveDataToServer: the player's profile data, as
+    # {"avatarattributes": [{name, type, collectiontype, stringValue | intValue}, ...]}.
+    # Only the signed-in player may change their own data.
+    user = avatar_owner(message)
+    caller = ACCOUNTS.by_session(message.get('header', {}).get('sessionid'))
+    if user is None or caller is None or caller['id'] != user['id']:
+        return error(1, 'not signed in')
+    ACCOUNTS.save_avatar_attributes(user, message.get('avatarattributes', []))
+    return {'list': {}}
+
+
+@endpoint('/gbro/resources/avatar/queryattributes')
+def avatar_query_attributes(message):
+    # CAttributeManager::getDataFromServer asks for a player's attributes by collection type
+    # ({"avatarattributes": [{"collectiontype": N}, ...]}); the reply's "list" is an array of
+    # attribute objects in the same form they were saved in (CAttributeManager::
+    # extractAttributeValuesAsArray). Friends' data is read this way for Brotherhood.
+    user = avatar_owner(message)
+    types = [a.get('collectiontype') for a in message.get('avatarattributes', [])]
+    attrs = ACCOUNTS.avatar_attributes(user, types) if user else []
+    return {'list': attrs if attrs else {}}
 
 
 @endpoint('/gbro/resources/user/getnettime2')

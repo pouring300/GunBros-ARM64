@@ -223,6 +223,38 @@ void game_hooks_auto_register(void) {
     call_dialog_handler(GUEST_FN_NGS_REGISTER_SUBMITTED, "ngs_register", user, pass, email);
 }
 
+void game_hooks_ngs_profile_online(void) {
+    static int s_done = 0;
+    if (s_done) return;
+#ifdef __ANDROID__
+    char host[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.gunbros.ngs_host", host);
+    if (host[0] == '\0') { s_done = 1; return; }
+#else
+    s_done = 1;
+    return;
+#endif
+
+    uint32_t gunbros = get_gunbros(), profile = 0, other = 0;
+    uint8_t valid = 0, other_valid = 0, online = 0;
+    if (gunbros == 0) return;
+    guest_mem_read(gunbros + GUEST_OFF_GB_PROFILE_MGR, &profile, 4);
+    if (profile == 0) return;
+    guest_mem_read(profile + GUEST_OFF_SERVER_OBJECT_VALID, &valid, 1);
+    guest_mem_read(profile + GUEST_OFF_PROFILE_SERVER_OBJ, &other, 4);
+    if (other) guest_mem_read(other + GUEST_OFF_SERVER_OBJECT_VALID, &other_valid, 1);
+    if (!valid || !other_valid) return;
+
+    /* CProfileManager::LoginInitResourceLoaderCallback sets this flag at startup when the account
+       is already signed in; ours signs in later, so set it the same way once it is. */
+    s_done = 1;
+    guest_mem_read(profile + GUEST_OFF_PROFILE_ONLINE, &online, 1);
+    if (online) return;
+    online = 1;
+    guest_mem_write(profile + GUEST_OFF_PROFILE_ONLINE, &online, 1);
+    LOGI("[NGS] signed in, profile online (profile 0x%x)", profile);
+}
+
 void game_hooks_on_touch_ended(int x, int y) {
     (void)y;
     uint32_t app_ptr = 0;
