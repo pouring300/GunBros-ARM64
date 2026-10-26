@@ -68,6 +68,9 @@ static const game_patch_entry_t s_game_patches[] = {
 
     /* Patch M: CMeshAnimationController::Render (hooks into Trampoline M) */
     { GUEST_PATCH_MESH_ANIM_RENDER,        true, 0xe3500000, 0xea06dc8d, 4, "CMeshAnimationController::Render trampoline branch" },
+
+    /* Patch N: refinery meters enabled without a Glu NGS profile (bl IsProfileValid -> mov r0, 1) */
+    { GUEST_PATCH_REFINERY_METERS_ENABLED, true, 0xeb0196e3, 0xe3a00001, 4, "Refinery meters enabled mov r0, 1" },
 };
 
 const game_patch_entry_t* game_patches_get_table(size_t *count) {

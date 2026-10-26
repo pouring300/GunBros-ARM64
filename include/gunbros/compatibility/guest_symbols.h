@@ -157,4 +157,18 @@
 #define GUEST_PATCH_TRAMPOLINE_M             0x004f0080u
 #define GUEST_PATCH_MESH_ANIM_RENDER         0x00338e44u
 
+/* Patch N: refinery meters are only enabled while the Glu NGS profile is "valid" (synced with
+   Glu's defunct server). Make menu element 0x51 (GetElementValueBoolean) report enabled. */
+#define GUEST_PATCH_REFINERY_METERS_ENABLED  0x002f302cu
+
+/* Refinery: Premium/Standard slot chain (slot N unlocks after collecting from gate[N]) */
+#define GUEST_OFF_GB_REFINERY                0x18u   /* GunBros -> CRefinementManager* */
+#define GUEST_OFF_REFINERY_GATE              200u    /* u8[12]: slot that must be collected first */
+#define GUEST_OFF_REFINERY_SLOTS             0xd8u   /* CRefinementSlot[12], 0x20 bytes each, +0 = state */
+#define GUEST_REFINERY_SLOT_COUNT            12
+#define GUEST_REFINERY_STATE_LOCKED          0u
+#define GUEST_REFINERY_STATE_READY           1u
+#define GUEST_REFINERY_STATE_COMPLETE        3u
+#define GUEST_FN_REFINERY_SAVE_STATE_CHANGE  0x0035fd58u  /* CRefinementManager::SaveStateChange() */
+
 #endif // GUNBROS_GUEST_SYMBOLS_H

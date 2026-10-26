@@ -20,6 +20,14 @@ void game_hooks_on_touch_ended(int x, int y);
  */
 void game_hooks_seed_network_time(void);
 
+/**
+ * Called every frame. Glu's server used to unlock the next refinery in the chain
+ * (CRefinementManager gate table) when the player collected from the previous one;
+ * the game itself never does. Recreate that: when slot K is collected (complete ->
+ * ready), unlock every locked slot gated on K and save via SaveStateChange().
+ */
+void game_hooks_refinery_unlock_chain(void);
+
 GUNBROS_EXTERN_C_END
 
 #endif // GUNBROS_GAME_HOOKS_H

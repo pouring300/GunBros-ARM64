@@ -34,6 +34,49 @@ void game_hooks_seed_network_time(void) {
     LOGI("Seeded network time: %llu ms (session=0x%x)", (unsigned long long)now_ms, session);
 }
 
+void game_hooks_refinery_unlock_chain(void) {
+    static uint32_t s_prev[GUEST_REFINERY_SLOT_COUNT];
+    static uint32_t s_prev_rm = 0;
+    uint32_t gunbros = get_gunbros(), rm = 0;
+    if (gunbros == 0) return;
+    guest_mem_read(gunbros + GUEST_OFF_GB_REFINERY, &rm, 4);
+    if (rm == 0) return;
+
+    uint32_t state[GUEST_REFINERY_SLOT_COUNT];
+    uint8_t gate[GUEST_REFINERY_SLOT_COUNT];
+    for (int i = 0; i < GUEST_REFINERY_SLOT_COUNT; i++) {
+        guest_mem_read(rm + GUEST_OFF_REFINERY_SLOTS + i * 0x20, &state[i], 4);
+    }
+    guest_mem_read(rm + GUEST_OFF_REFINERY_GATE, gate, sizeof(gate));
+
+    if (rm != s_prev_rm) {  /* first look at this manager: nothing to compare against */
+        s_prev_rm = rm;
+        memcpy(s_prev, state, sizeof(state));
+        return;
+    }
+
+    int changed = 0;
+    for (int k = 0; k < GUEST_REFINERY_SLOT_COUNT; k++) {
+        /* CRefinementSlot::Collect moves a slot from complete back to ready. */
+        if (s_prev[k] != GUEST_REFINERY_STATE_COMPLETE || state[k] != GUEST_REFINERY_STATE_READY) continue;
+        for (int n = 0; n < GUEST_REFINERY_SLOT_COUNT; n++) {
+            /* gate 0 means "not gated" (see CRefinementManager::IsGated) */
+            if (n != k && gate[n] != 0 && gate[n] == k && state[n] == GUEST_REFINERY_STATE_LOCKED) {
+                state[n] = GUEST_REFINERY_STATE_READY;
+                guest_mem_write(rm + GUEST_OFF_REFINERY_SLOTS + n * 0x20, &state[n], 4);
+                LOGI("Refinery: collected slot %d, unlocked slot %d", k, n);
+                changed = 1;
+            }
+        }
+    }
+    memcpy(s_prev, state, sizeof(state));
+
+    if (changed) {
+        prepare_call_arm(rm);
+        run_guest(GUEST_FN_REFINERY_SAVE_STATE_CHANGE, "refinery_save");
+    }
+}
+
 void game_hooks_on_touch_ended(int x, int y) {
     (void)y;
     uint32_t app_ptr = 0;
