@@ -5,7 +5,13 @@
 #include "gunbros/emulator/hle_dispatcher.h"
 #include "gunbros/platform/android_window.h"
 #include "gunbros/platform/network_time.h"
+#include "gunbros/filesystem/path_mapper.h"
+#include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 
 static uint32_t get_gunbros(void) {
     uint32_t app_ptr = 0, gunbros = 0;
@@ -75,6 +81,64 @@ void game_hooks_refinery_unlock_chain(void) {
         prepare_call_arm(rm);
         run_guest(GUEST_FN_REFINERY_SAVE_STATE_CHANGE, "refinery_save");
     }
+}
+
+static uint32_t guest_wstr(const char *s) {
+    size_t n = strlen(s);
+    uint32_t g = guest_alloc((uint32_t)(n + 1) * 2);
+    for (size_t i = 0; i <= n; i++) {
+        uint16_t ch = (uint8_t)s[i];
+        guest_mem_write(g + (uint32_t)i * 2, &ch, 2);
+    }
+    return g;
+}
+
+static void random_hex(char *out, size_t bytes) {
+    uint8_t buf[16] = {0};
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (f) {
+        fread(buf, 1, bytes, f);
+        fclose(f);
+    }
+    for (size_t i = 0; i < bytes; i++) sprintf(out + i * 2, "%02x", buf[i]);
+}
+
+void game_hooks_auto_register(void) {
+    static int s_done = 0, s_menu_frames = 0;
+    if (s_done) return;
+
+#ifdef __ANDROID__
+    char host[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.gunbros.ngs_host", host);
+    if (host[0] == '\0') { s_done = 1; return; }
+#else
+    s_done = 1;
+    return;
+#endif
+
+    uint32_t gunbros = get_gunbros(), gstate = 0;
+    if (gunbros == 0) return;
+    guest_mem_read(gunbros + GUEST_OFF_GB_GSTATE, &gstate, 4);
+    if (gstate != 5) { s_menu_frames = 0; return; }
+    if (++s_menu_frames < 300) return;  /* let the main menu settle (~5 s) */
+    s_done = 1;
+
+    char path[512];
+    struct stat st;
+    snprintf(path, sizeof(path), "%sCredentials.dat", path_mapper_get_base_dir());
+    if (stat(path, &st) == 0) return;
+
+    char user[32] = "bro", pass[33], email[64];
+    random_hex(user + 3, 6);
+    random_hex(pass, 16);
+    snprintf(email, sizeof(email), "%s@gunbros.invalid", user);
+    LOGI("[NGS] no Glu account yet, registering '%s'", user);
+
+    prepare_call_arm(0);
+    dynarmic_backend_set_reg(1, guest_wstr(user));
+    dynarmic_backend_set_reg(2, guest_wstr(pass));
+    dynarmic_backend_set_reg(3, guest_wstr(email));
+    run_guest(GUEST_FN_NGS_REGISTER_SUBMITTED, "ngs_register");
 }
 
 void game_hooks_on_touch_ended(int x, int y) {

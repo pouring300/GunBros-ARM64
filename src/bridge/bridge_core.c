@@ -200,6 +200,7 @@ void bridge_on_draw_frame(JNIEnv *env, jobject thiz, jint id, jlong time, jboole
             uint64_t guest_elapsed = bridge_monotonic_ns() - guest_start;
             game_hooks_seed_network_time();
             game_hooks_refinery_unlock_chain();
+            game_hooks_auto_register();
             uint64_t lock_wait = lock_acquired - lock_wait_start;
 
             if (guest_elapsed > 50000000ull || lock_wait > 10000000ull) {

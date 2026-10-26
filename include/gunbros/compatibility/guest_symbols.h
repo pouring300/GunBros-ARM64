@@ -177,4 +177,9 @@
 #define GUEST_REFINERY_STATE_COMPLETE        3u
 #define GUEST_FN_REFINERY_SAVE_STATE_CHANGE  0x0035fd58u  /* CRefinementManager::SaveStateChange() */
 
+/* Glu account registration: CNGSUIManager::onRegisterDialogSubmitted(this unused, gamertag, password,
+   email; UTF-16) converts its three UTF-16 strings and calls CGluSocialManager::CreateAccount. The Android
+   port never shows the register dialog (CNGS_Platform::showDialogUserRegister is an empty stub). */
+#define GUEST_FN_NGS_REGISTER_SUBMITTED      0x0043289cu
+
 #endif // GUNBROS_GUEST_SYMBOLS_H
