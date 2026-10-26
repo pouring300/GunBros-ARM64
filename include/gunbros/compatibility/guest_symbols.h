@@ -161,6 +161,12 @@
    Glu's defunct server). Make menu element 0x51 (GetElementValueBoolean) report enabled. */
 #define GUEST_PATCH_REFINERY_METERS_ENABLED  0x002f302cu
 
+/* Patch O: CGunBros::UpdateOnlineStatus() (daily bonus, inactivity bonus, refinery timers,
+   friend-XP timer, challenges, offers) only runs while the Glu NGS profile is valid. Treat the
+   player as online at these two checks; CProfileManager save/load/sync keep their own checks. */
+#define GUEST_PATCH_ONLINE_STATUS_UPDATE     0x002b7a88u  /* in CGunBros::UpdateOnlineStatus */
+#define GUEST_PATCH_ONLINE_STATUS_POLL       0x002bc200u  /* in CGunBros::Update */
+
 /* Refinery: Premium/Standard slot chain (slot N unlocks after collecting from gate[N]) */
 #define GUEST_OFF_GB_REFINERY                0x18u   /* GunBros -> CRefinementManager* */
 #define GUEST_OFF_REFINERY_GATE              200u    /* u8[12]: slot that must be collected first */
