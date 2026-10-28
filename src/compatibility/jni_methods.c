@@ -171,6 +171,79 @@ static bool jni_method_get_type(const jni_call_context_t *ctx) {
     return true;
 }
 
+bool jni_launch_url(const char *url, int type) {
+    bool ok = false;
+    JNIEnv *real_env = platform_get_env();
+    jobject real_callback = platform_get_callback();
+    if (real_env && real_callback && url && url[0] != '\0') {
+        jstring j_url = (*real_env)->NewStringUTF(real_env, url);
+        if (j_url) {
+            jclass cls = (*real_env)->GetObjectClass(real_env, real_callback);
+            jmethodID mid = (*real_env)->GetMethodID(real_env, cls, "LaunchURL", "(Ljava/lang/String;I)Z");
+            if (mid) {
+                jboolean res = (*real_env)->CallBooleanMethod(real_env, real_callback, mid, j_url, (jint)type);
+                LOGI("[JNI] LaunchURL(String, int) returned %d from Java", res);
+                ok = res;
+            } else {
+                (*real_env)->ExceptionClear(real_env);
+                jmethodID mid_fallback = (*real_env)->GetMethodID(real_env, cls, "LaunchURL", "(Ljava/lang/String;)Z");
+                if (mid_fallback) {
+                    jboolean res = (*real_env)->CallBooleanMethod(real_env, real_callback, mid_fallback, j_url);
+                    LOGI("[JNI] LaunchURL(String) fallback returned %d from Java", res);
+                    ok = res;
+                } else {
+                    (*real_env)->ExceptionClear(real_env);
+                    LOGE("[JNI] Could not find LaunchURL method in Java callback");
+                }
+            }
+            (*real_env)->DeleteLocalRef(real_env, j_url);
+        }
+    }
+    return ok;
+}
+
+bool jni_copy_to_clipboard(const char *label, const char *text) {
+    JNIEnv *env = platform_get_env();
+    jobject context = platform_get_callback();
+    if (!env || !context || !text) return false;
+    bool ok = false;
+    jclass ctx_cls = (*env)->GetObjectClass(env, context);
+    jmethodID get_service = (*env)->GetMethodID(env, ctx_cls, "getSystemService",
+                                                "(Ljava/lang/String;)Ljava/lang/Object;");
+    jclass clip_cls = (*env)->FindClass(env, "android/content/ClipData");
+    jmethodID new_plain = clip_cls ? (*env)->GetStaticMethodID(env, clip_cls, "newPlainText",
+        "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;") : NULL;
+    if (get_service && new_plain) {
+        jstring j_service = (*env)->NewStringUTF(env, "clipboard");
+        jobject manager = (*env)->CallObjectMethod(env, context, get_service, j_service);
+        if (manager) {
+            jstring j_label = (*env)->NewStringUTF(env, label);
+            jstring j_text = (*env)->NewStringUTF(env, text);
+            jobject clip = (*env)->CallStaticObjectMethod(env, clip_cls, new_plain, j_label, j_text);
+            jclass cm_cls = (*env)->GetObjectClass(env, manager);
+            jmethodID set_clip = (*env)->GetMethodID(env, cm_cls, "setPrimaryClip", "(Landroid/content/ClipData;)V");
+            if (clip && set_clip) {
+                (*env)->CallVoidMethod(env, manager, set_clip, clip);
+                ok = !(*env)->ExceptionCheck(env);
+            }
+            (*env)->DeleteLocalRef(env, j_label);
+            (*env)->DeleteLocalRef(env, j_text);
+            if (clip) (*env)->DeleteLocalRef(env, clip);
+            (*env)->DeleteLocalRef(env, cm_cls);
+            (*env)->DeleteLocalRef(env, manager);
+        }
+        (*env)->DeleteLocalRef(env, j_service);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        ok = false;
+    }
+    if (clip_cls) (*env)->DeleteLocalRef(env, clip_cls);
+    (*env)->DeleteLocalRef(env, ctx_cls);
+    LOGI("[JNI] copy to clipboard %s", ok ? "done" : "failed");
+    return ok;
+}
+
 static bool jni_method_launch_url(const jni_call_context_t *ctx) {
     const char *url = jvm_get_last_string();
     uint32_t type = get_jni_method_arg(ctx->idx, *ctx->r3, ctx->sp, 1);
@@ -182,30 +255,7 @@ static bool jni_method_launch_url(const jni_call_context_t *ctx) {
         url = GUNBROS_WIKI_URL;
     }
 
-    JNIEnv *real_env = platform_get_env();
-    jobject real_callback = platform_get_callback();
-    if (real_env && real_callback && url && url[0] != '\0') {
-        jstring j_url = (*real_env)->NewStringUTF(real_env, url);
-        if (j_url) {
-            jclass cls = (*real_env)->GetObjectClass(real_env, real_callback);
-            jmethodID mid = (*real_env)->GetMethodID(real_env, cls, "LaunchURL", "(Ljava/lang/String;I)Z");
-            if (mid) {
-                jboolean res = (*real_env)->CallBooleanMethod(real_env, real_callback, mid, j_url, (jint)type);
-                LOGI("[JNI] LaunchURL(String, int) returned %d from Java", res);
-            } else {
-                (*real_env)->ExceptionClear(real_env);
-                jmethodID mid_fallback = (*real_env)->GetMethodID(real_env, cls, "LaunchURL", "(Ljava/lang/String;)Z");
-                if (mid_fallback) {
-                    jboolean res = (*real_env)->CallBooleanMethod(real_env, real_callback, mid_fallback, j_url);
-                    LOGI("[JNI] LaunchURL(String) fallback returned %d from Java", res);
-                } else {
-                    (*real_env)->ExceptionClear(real_env);
-                    LOGE("[JNI] Could not find LaunchURL method in Java callback");
-                }
-            }
-            (*real_env)->DeleteLocalRef(real_env, j_url);
-        }
-    }
+    jni_launch_url(url, (int)type);
     *ctx->r0 = 1;
     return true;
 }

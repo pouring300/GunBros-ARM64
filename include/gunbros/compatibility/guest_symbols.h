@@ -220,6 +220,12 @@
 #define GUEST_FN_MENU_DO_ACTION              0x002e655cu  /* CMenuAction::DoAction(CMenu*, MenuAction, uint, uint) */
 #define GUEST_MENU_ACTION_MENU_SPECIFIC      0x67u        /* DoAction: passes the argument to the menu (vtable +0x1c) */
 #define GUEST_MENU_ACTION_NONE               0x9fu        /* DoAction: default case, does nothing */
+#define GUEST_MENU_ACTION_FRIEND_LIST_UPDATED 0x58u       /* CProfileManager::HandleFriendListUpdate -> current menu */
+#define GUEST_MENU_ACTION_FRIENDS_RESET      0x61u        /* sent by CMenuFriends::Reset */
+#define GUEST_MENU_ACTION_SOCIAL             0x55u        /* social network button; argument = network */
+#define GUEST_SOCIAL_NETWORK_FACEBOOK        2u
+/* Where the Facebook buttons lead now: the restoration community's Discord. */
+#define GUNBROS_COMMUNITY_URL                "https://discord.gg/3mWsGmPAQ"
 #define GUEST_VTABLE_CMENUFRIENDS            0x004c1938u  /* Brotherhood menu */
 #define GUEST_VT_MENU_REFRESH                0x1cu        /* CMenu vtable: Refresh(MenuAction, int) */
 #define GUEST_MENU_REFRESH_BIND              0x2bu        /* Refresh action sent once a menu's data has loaded */
@@ -234,6 +240,9 @@
 #define GUEST_FN_SHOW_MESSAGE_POPUP          0x0025fcc0u  /* CAndroidMessagePopup::ShowAndroidMessagePopup(type, title, text, a..e) */
 #define GUEST_FN_MESSAGE_POPUP_REFRESH       0x0025f6e8u  /* CAndroidMessagePopup::RefreshMidMenuPopup(popup, MenuAction) */
 #define GUEST_OFF_SEARCH_POPUP_FIELD         0xf8u        /* CAndroidSearchPopup -> CAndroidUiTextField* */
+#define GUEST_OFF_SEARCH_POPUP_BUTTON_C      0x1a4u       /* CAndroidSearchPopup -> third CMenuMovieButton */
+#define GUEST_OFF_MENU_BUTTON_LABEL          0x3cu        /* CMenuMovieButton -> label (CStrWChar*, owned) */
+#define GUEST_FN_NP_MALLOC                   0x00165480u  /* np_malloc(size) */
 #define GUEST_OFF_TEXT_FIELD_OBJECT          0x18u        /* CAndroidUiTextField -> GluTextBox jobject (bridge text box handle) */
 #define GUEST_OFF_MENU_MID_POPUP             0x8cu        /* CMenuSystem -> current CMenuMidPopup* */
 #define GUEST_OFF_SESSION_ID                 0x20u        /* CNGSSession -> session id (UTF-16, CNGSSessionConfig at +0x18) */
@@ -242,6 +251,8 @@
    _ADD_BUDDY, _REMOVE_BUDDY, _OK, ...) fires MenuAction 0xa8 + n. */
 #define GUEST_POPUP_BUTTON_CANCEL            0u
 #define GUEST_POPUP_BUTTON_ADD_BUDDY         5u
+#define GUEST_POPUP_BUTTON_COPY              2u           /* "Go", relabelled "Copy" */
+#define GUEST_POPUP_ACTION_COPY              0xaau
 #define GUEST_POPUP_BUTTON_OK                8u
 #define GUEST_POPUP_ACTION_CANCEL            0xa8u
 #define GUEST_POPUP_ACTION_ADD_BUDDY         0xadu

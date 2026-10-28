@@ -7,6 +7,7 @@
 #include "gunbros/platform/network_time.h"
 #include "gunbros/filesystem/path_mapper.h"
 #include "gunbros/compatibility/jni_textbox.h"
+#include "gunbros/compatibility/jni_methods.h"
 #include "gunbros/platform/ngs_ext.h"
 #include "gunbros/platform/ngs_config.h"
 #include <stdio.h>
@@ -290,6 +291,7 @@ enum {
     ADD_BRO_REQUESTED,      /* banner tapped */
     ADD_BRO_FETCHING_CODE,  /* asking the server for the player's own code */
     ADD_BRO_SHOWN,          /* popup open */
+    ADD_BRO_COPY,           /* "Copy" pressed: copy the code and show the popup again */
     ADD_BRO_SUBMITTED,      /* friend code entered */
     ADD_BRO_ADDING,         /* asking the server to add the friend */
 };
@@ -302,6 +304,7 @@ static uint32_t s_add_bro_popup = 0;    /* our CAndroidSearchPopup while it is s
 static bool s_add_bro_hint_set = false; /* its text field shows the "enter a code" hint */
 static uint32_t s_add_bro_message = 0;  /* our CAndroidMessagePopup while it is shown */
 static char s_add_bro_code[32];
+static char s_own_code[32];             /* the player's own friend code, once fetched */
 static uint32_t s_friends_menu = 0;       /* the CMenuFriends the banner was tapped on */
 static int s_friends_bind_frames = 0;     /* frames left to wait before re-binding its friend list */
 #define FRIENDS_BIND_MAX_FRAMES 600
@@ -362,6 +365,21 @@ void game_hooks_on_svc(uint32_t idx) {
            which showed the Facebook "How to get Bros" help. */
         uint32_t vtable = 0;
         if (object) guest_mem_read(object, &vtable, 4);
+        /* The Facebook buttons (social action with network 2 = Facebook) open the community's
+           Discord instead. */
+        if (action == GUEST_MENU_ACTION_SOCIAL && dynarmic_backend_get_reg(2) == GUEST_SOCIAL_NETWORK_FACEBOOK) {
+            jni_launch_url(GUNBROS_COMMUNITY_URL, 0);
+            action = GUEST_MENU_ACTION_NONE;
+            break;
+        }
+        /* Brotherhood loses its list whenever the friend list is reloaded mid-session (see
+           bind_friends_menu): after the game's reload notice (0x58, sent to the current menu)
+           and whenever the tab resets (0x61), re-bind it once the friends' data is in. */
+        if (vtable == GUEST_VTABLE_CMENUFRIENDS &&
+            (action == GUEST_MENU_ACTION_FRIEND_LIST_UPDATED || action == GUEST_MENU_ACTION_FRIENDS_RESET)) {
+            s_friends_menu = object;
+            s_friends_bind_frames = FRIENDS_BIND_MAX_FRAMES;
+        }
         if (action == GUEST_MENU_ACTION_MENU_SPECIFIC && dynarmic_backend_get_reg(2) == 0 &&
             vtable == GUEST_VTABLE_CMENUFRIENDS) {
             if (s_add_bro_state == ADD_BRO_IDLE) s_add_bro_state = ADD_BRO_REQUESTED;
@@ -376,8 +394,12 @@ void game_hooks_on_svc(uint32_t idx) {
             guest_mem_read(object + GUEST_OFF_SEARCH_POPUP_FIELD, &field, 4);
             read_text_field(field, s_add_bro_code, sizeof(s_add_bro_code));
             s_add_bro_popup = 0;
-            s_add_bro_state = (action == GUEST_POPUP_ACTION_ADD_BUDDY && s_add_bro_code[0])
-                              ? ADD_BRO_SUBMITTED : ADD_BRO_IDLE;
+            if (action == GUEST_POPUP_ACTION_COPY) {
+                s_add_bro_state = ADD_BRO_COPY;
+            } else {
+                s_add_bro_state = (action == GUEST_POPUP_ACTION_ADD_BUDDY && s_add_bro_code[0])
+                                  ? ADD_BRO_SUBMITTED : ADD_BRO_IDLE;
+            }
             action = GUEST_SEARCH_POPUP_ACTION_CLOSE;  /* not an OpenSpy search */
         }
         break;
@@ -425,9 +447,27 @@ static uint32_t current_mid_popup(void) {
 
 static void show_add_bro_popup(const char *title) {
     const uint32_t args[] = { guest_cstrwchar(title), GUEST_POPUP_BUTTON_CANCEL,
-                              GUEST_POPUP_BUTTON_ADD_BUDDY, (uint32_t)-1, (uint32_t)-1 };
+                              GUEST_POPUP_BUTTON_ADD_BUDDY, GUEST_POPUP_BUTTON_COPY, (uint32_t)-1 };
     call_guest_args(GUEST_FN_SHOW_SEARCH_POPUP, "add_bro_popup", args, 5);
     s_add_bro_popup = current_mid_popup();
+    s_add_bro_hint_set = false;
+    if (s_add_bro_popup) {
+        /* No popup button label says "Copy": relabel the third one. A button's label is a
+           CStrWChar it owns (+0x3c); give it one allocated by the game (np_malloc), as
+           CMenuMovieButton::SetLabel would, so the game can free it. The old one is left alone. */
+        prepare_call_arm(0x10);
+        run_guest(GUEST_FN_NP_MALLOC, "np_malloc");
+        uint32_t label = dynarmic_backend_get_reg(0);
+        if (label) {
+            uint32_t words[4] = { GUEST_VTABLE_CSTRWCHAR, GUEST_CSTRWCHAR_MAGIC, 0, 0 };
+            guest_mem_write(label, words, sizeof(words));
+            prepare_call_arm(label);
+            dynarmic_backend_set_reg(1, guest_str("Copy"));
+            run_guest(GUEST_FN_CSTRWCHAR_CONCATENATE_CHAR, "cstrwchar");
+            guest_mem_write(s_add_bro_popup + GUEST_OFF_SEARCH_POPUP_BUTTON_C + GUEST_OFF_MENU_BUTTON_LABEL,
+                            &label, 4);
+        }
+    }
 }
 
 /* The popup's labels are a single line each (no wrapping): keep texts short. */
@@ -510,9 +550,9 @@ void game_hooks_add_bro(void) {
         if (ngs_ext_json_string(reply, "code", code, sizeof(code))) {
             /* The popup's title is the only label it has (one line, no wrapping), so the field's
                hint explains what to type. */
+            snprintf(s_own_code, sizeof(s_own_code), "%s", code);
             snprintf(text, sizeof(text), "Your friend code: %s", code);
             show_add_bro_popup(text);
-            s_add_bro_hint_set = false;
             s_add_bro_state = ADD_BRO_SHOWN;
         } else {
             show_add_bro_message("Add a Bro", "Can't reach the Gun Bros server.");
@@ -533,6 +573,13 @@ void game_hooks_add_bro(void) {
             s_add_bro_popup = 0;
             s_add_bro_state = ADD_BRO_IDLE;
         }
+        break;
+
+    case ADD_BRO_COPY:
+        jni_copy_to_clipboard("Gun Bros friend code", s_own_code);
+        snprintf(text, sizeof(text), "Copied! Code: %s", s_own_code);
+        show_add_bro_popup(text);
+        s_add_bro_state = ADD_BRO_SHOWN;
         break;
 
     case ADD_BRO_SUBMITTED:

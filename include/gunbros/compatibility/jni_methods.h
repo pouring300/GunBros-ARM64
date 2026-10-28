@@ -32,6 +32,12 @@ uint32_t get_jni_method_arg(int idx, uint32_t r3, uint32_t sp, int arg_idx);
  */
 bool jni_methods_dispatch(const char *name, const jni_call_context_t *ctx);
 
+/* Open a URL through the activity's LaunchURL (type 0: browser). */
+bool jni_launch_url(const char *url, int type);
+
+/* Put plain text on the Android clipboard. */
+bool jni_copy_to_clipboard(const char *label, const char *text);
+
 GUNBROS_EXTERN_C_END
 
 #endif // GUNBROS_JNI_METHODS_H
