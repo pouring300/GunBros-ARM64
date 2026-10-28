@@ -1,3 +1,5 @@
+#include "gunbros/compatibility/icon_patches.h"
+#include <string.h>
 #include "hle_internal.h"
 
 #ifdef __ANDROID__
@@ -101,10 +103,36 @@ static void h_glGetString(hle_t *c) {
     }
 }
 static void h_glBindBuffer(hle_t *c)        { glBindBuffer(c->r0, c->r1); }
+/* The Facebook buttons now open the community's Discord (see game_hooks.c), so show the Discord
+   logo on them: when the game uploads a UI atlas that holds the Facebook icon, paint the logo over
+   it first. Atlases are recognised by size and a fingerprint of the icon's own pixels. */
+static uint32_t fnv1a_rect(const uint8_t *pix, uint32_t stride, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    uint32_t hash = 0x811c9dc5u;
+    for (uint32_t r = 0; r < h; r++) {
+        const uint8_t *row = pix + ((size_t)(y + r) * stride + x) * 4;
+        for (uint32_t i = 0; i < w * 4; i++) hash = (hash ^ row[i]) * 0x01000193u;
+    }
+    return hash;
+}
+
+static void patch_icons(uint32_t w, uint32_t h, uint32_t format, uint32_t type, uint8_t *pix) {
+    if (!pix || format != GL_RGBA || type != GL_UNSIGNED_BYTE) return;
+    for (size_t i = 0; i < sizeof(s_icon_patches) / sizeof(s_icon_patches[0]); i++) {
+        const icon_patch_t *p = &s_icon_patches[i];
+        if (p->atlas_w != w || p->atlas_h != h) continue;
+        if (fnv1a_rect(pix, w, p->x, p->y, p->w, p->h) != p->fingerprint) continue;
+        for (uint32_t r = 0; r < p->h; r++) {
+            memcpy(pix + ((size_t)(p->y + r) * w + p->x) * 4, p->rgba + (size_t)r * p->w * 4, (size_t)p->w * 4);
+        }
+        LOGI("[GL] Facebook icon %zu replaced with the Discord logo", i);
+    }
+}
+
 static void h_glTexImage2D(hle_t *c) {
     uint32_t sp_args[5];
     guest_mem_read(c->sp, sp_args, sizeof(sp_args));
     void *pix = guest_to_host(sp_args[4]);
+    patch_icons(c->r3, sp_args[0], sp_args[2], sp_args[3], (uint8_t *)pix);
     glTexImage2D(c->r0, c->r1, c->r2, c->r3, sp_args[0], sp_args[1], sp_args[2], sp_args[3], pix);
 }
 static void h_glCompressedTexImage2D(hle_t *c) {
