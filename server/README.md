@@ -138,3 +138,7 @@ attribute lists (`{name, type, collectiontype, stringValue | intValue}`, collect
 number); the server drops everything but the public attributes. The game rejects a friend's
 progress unless all of its fields are present, so the private ones (coins etc.) are sent as zeros. At sign-in the bridge marks stores
 in state 4 as changed locally, so they are uploaded rather than waiting for server data.
+
+Brotherhood's once-a-day gift per Bro depends on when each Bro was last used. The original game
+kept that on Glu's server among the player's own attributes; here the bridge keeps it on the
+phone (`BroUsage.dat` next to the save files) and the server doesn't store it.

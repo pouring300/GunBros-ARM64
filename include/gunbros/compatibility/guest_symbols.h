@@ -249,6 +249,7 @@
 #define GUEST_OFF_LIST_ITEMS                 0x28u        /* CNGSRemoteUserList: entry pointer array */
 #define GUEST_OFF_FRIEND_CLIENT_ID           0x18u        /* CFriendData: credentials, client id first */
 #define GUEST_OFF_FRIEND_AVATAR_CONFIG       0xe8u        /* CFriendData: CPlayerConfiguration */
+#define GUEST_OFF_FRIEND_LAST_USED           0x7cu        /* CFriendData: network time (s) he was last used; a gift is due 24 h later */
 #define GUEST_OFF_GB_MENU_PLAYER_CONFIG      0x268u       /* GunBros: CPlayerConfiguration the menus' 3D Bro shows */
 #define GUEST_FN_FRIEND_MGR_SET_ACTIVE       0x002aa3dcu  /* CFriendDataManager::SetActiveFriend(CFriendData*) */
 #define GUEST_FN_PLAYER_CONFIG_ASSIGN        0x0034808cu  /* CPlayerConfiguration::operator=(const CPlayerConfiguration&) */

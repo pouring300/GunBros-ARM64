@@ -352,12 +352,89 @@ static bool restore_on_duty_bro(void) {
     return true;
 }
 
+/* Brotherhood gives a small gift once a day per Bro you use (CFriendDataManager::
+   IsFriendMarkedAsUsed: used less than 24 h ago). The time is kept per Bro (CFriendData+0x7c) and
+   the game saved it on Glu's server as one of the player's own attributes; ours keeps no player's
+   own game state, so it would be forgotten whenever the Bros are reloaded and the gift could be
+   collected again. Keep it on the phone instead: save newer times to BroUsage.dat ("<client id>
+   <time>" lines) and put saved ones back into the Bros the game loads. */
+#define BRO_USAGE_MAX 64
+static struct { int32_t client_id; uint32_t used; } s_bro_usage[BRO_USAGE_MAX];
+static int s_bro_usage_count = -1;  /* -1: not loaded yet */
+
+static void bro_usage_path(char *out, size_t size) {
+    snprintf(out, size, "%sBroUsage.dat", path_mapper_get_base_dir());
+}
+
+static void sync_bro_usage(void) {
+    char path[512];
+    bro_usage_path(path, sizeof(path));
+    if (s_bro_usage_count < 0) {
+        s_bro_usage_count = 0;
+        FILE *f = fopen(path, "r");
+        if (f) {
+            long id;
+            unsigned long used;
+            while (s_bro_usage_count < BRO_USAGE_MAX && fscanf(f, "%ld %lu", &id, &used) == 2) {
+                s_bro_usage[s_bro_usage_count].client_id = (int32_t)id;
+                s_bro_usage[s_bro_usage_count].used = (uint32_t)used;
+                s_bro_usage_count++;
+            }
+            fclose(f);
+        }
+    }
+
+    uint32_t gunbros = get_gunbros(), mgr = 0, list = 0, count = 0, items = 0;
+    if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_FRIEND_DATA_MGR, &mgr, 4);
+    if (mgr) guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FRIENDS, &list, 4);
+    if (list) {
+        guest_mem_read(list + GUEST_OFF_LIST_COUNT, &count, 4);
+        guest_mem_read(list + GUEST_OFF_LIST_ITEMS, &items, 4);
+    }
+    bool changed = false;
+    for (uint32_t i = 0; i < count && i < 256 && items; i++) {
+        uint32_t friend_data = 0, used = 0;
+        int32_t client_id = 0;
+        guest_mem_read(items + i * 4, &friend_data, 4);
+        if (friend_data == 0) continue;
+        guest_mem_read(friend_data + GUEST_OFF_FRIEND_CLIENT_ID, &client_id, 4);
+        guest_mem_read(friend_data + GUEST_OFF_FRIEND_LAST_USED, &used, 4);
+        if (client_id <= 0) continue;
+        int k = 0;
+        while (k < s_bro_usage_count && s_bro_usage[k].client_id != client_id) k++;
+        if (k < s_bro_usage_count && s_bro_usage[k].used > used) {
+            guest_mem_write(friend_data + GUEST_OFF_FRIEND_LAST_USED, &s_bro_usage[k].used, 4);
+        } else if (used != 0 && (k == s_bro_usage_count || s_bro_usage[k].used < used)) {
+            if (k == s_bro_usage_count) {
+                if (k == BRO_USAGE_MAX) continue;
+                s_bro_usage[k].client_id = client_id;
+                s_bro_usage_count++;
+            }
+            s_bro_usage[k].used = used;
+            changed = true;
+        }
+    }
+    if (!changed) return;
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        LOGW("[NGS] can't write %s", path);
+        return;
+    }
+    for (int k = 0; k < s_bro_usage_count; k++) {
+        fprintf(f, "%ld %lu\n", (long)s_bro_usage[k].client_id, (unsigned long)s_bro_usage[k].used);
+    }
+    fclose(f);
+}
+
 void game_hooks_ngs_profile_online(void) {
     static int s_done = 0, s_settle_frames = 0, s_frames = 0;
     static bool s_restore = false;
     static uint32_t s_profile = 0;
     if (s_settle_frames > 0 && --s_settle_frames == 0) settle_local_user(s_profile);
-    if (s_restore && ++s_frames % 60 == 0 && restore_on_duty_bro()) s_restore = false;  /* once a second */
+    if (s_done && ++s_frames % 60 == 0) {  /* once a second */
+        sync_bro_usage();
+        if (s_restore && restore_on_duty_bro()) s_restore = false;
+    }
     if (s_done) return;
     if (!ngs_config_enabled()) { s_done = 1; return; }
 
