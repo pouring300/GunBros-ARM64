@@ -59,8 +59,8 @@ To move existing accounts to a new server, stop both servers, copy `accounts.jso
 server's `--data-dir`, and start it again.
 
 Admin commands run on the host, with the same `--data-dir`: `accounts` lists players, and
-`befriend` (which talks to the running server, so it also needs `--port`) makes two players
-friends. Back up `accounts.json` from time to time.
+`befriend` / `unfriend` (which talk to the running server, so they also need `--port`) make or
+end a friendship. Back up `accounts.json` from time to time.
 
 The host name is built into the APK, so moving to another host means a new APK unless the name
 stays the same; a domain of your own, pointed at the server, avoids that.
@@ -122,6 +122,7 @@ Admin commands:
 ```bash
 python3 server/ngs_server.py accounts                 # players, ids, friend codes, friends
 python3 server/ngs_server.py befriend <id> <code>     # via the running server (uses server/admin.token)
+python3 server/ngs_server.py unfriend <id> <id>       # end a friendship, the same way
 ```
 
 ## Profile data

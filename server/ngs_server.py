@@ -98,6 +98,18 @@ class Accounts:
             self._save()
             return other, None
 
+    def unfriend(self, user, other_id):
+        """End the friendship between `user` and player `other_id`. Returns an error or None."""
+        with self.lock:
+            other = next((u for u in self.data['users'].values() if u['id'] == other_id), None)
+            if other is None or other_id not in user['friends']:
+                return 'Not friends.'
+            user['friends'].remove(other_id)
+            if user['id'] in other.get('friends', []):
+                other['friends'].remove(user['id'])
+            self._save()
+            return None
+
     def post_message(self, sender, recipient_id, msg_type, text, duration):
         """Queue a message for a friend. Returns False if the recipient isn't one."""
         with self.lock:
@@ -480,13 +492,24 @@ def ext_addfriend(body):
     return {'ok': True, 'gamertag': friend['gamertag']} if friend else {'ok': False, 'error': err}
 
 
+def ext_unfriend(body):
+    # Admin only (the `unfriend` command); the game has no way to remove a Bro.
+    if not (ADMIN_TOKEN and body.get('admin') == ADMIN_TOKEN):
+        return {'ok': False, 'error': 'Not allowed.'}
+    user = ext_player(body)
+    if user is None or not isinstance(body.get('friend'), int):
+        return {'ok': False, 'error': 'No such player.'}
+    err = ACCOUNTS.unfriend(user, body['friend'])
+    return {'ok': True} if err is None else {'ok': False, 'error': err}
+
+
 def ext_ping(body):
     return {'ok': True}
 
 
 # Endpoints used by the bridge itself: plain JSON in, plain JSON out.
 EXT_HANDLERS = {'/gunbros/friendcode': ext_friendcode, '/gunbros/addfriend': ext_addfriend,
-                '/gunbros/ping': ext_ping}
+                '/gunbros/unfriend': ext_unfriend, '/gunbros/ping': ext_ping}
 ADMIN_TOKEN = None
 
 
@@ -595,18 +618,26 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def cli(args):
-    """Small admin commands. `befriend` goes through the running server so its state stays in sync."""
+    """Small admin commands. `befriend` and `unfriend` go through the running server so its state
+    stays in sync."""
     if args.command == 'accounts':
         accounts = Accounts(os.path.join(args.data_dir, 'accounts.json'))
         for u in sorted(accounts.data['users'].values(), key=lambda u: u['id']):
             print(f"{u['id']:>6}  {u['code']}  {u['gamertag']:<20} friends={u.get('friends', [])}")
-    elif args.command == 'befriend':
+    elif args.command in ('befriend', 'unfriend'):
         import urllib.request
-        player_id, code = int(args.params[0]), args.params[1]
+        if len(args.params) != 2:
+            raise SystemExit(f'usage: {args.command} <player id> '
+                             f'{"<friend code>" if args.command == "befriend" else "<friend id>"}')
         with open(admin_token_path(args)) as f:
             token = f.read().strip()
-        req = urllib.request.Request(f'http://127.0.0.1:{args.port}/gunbros/addfriend', method='PUT',
-                                     data=json.dumps({'id': player_id, 'code': code, 'admin': token}).encode())
+        body = {'id': int(args.params[0]), 'admin': token}
+        if args.command == 'befriend':
+            path, body['code'] = '/gunbros/addfriend', args.params[1]
+        else:
+            path, body['friend'] = '/gunbros/unfriend', int(args.params[1])
+        req = urllib.request.Request(f'http://127.0.0.1:{args.port}{path}', method='PUT',
+                                     data=json.dumps(body).encode())
         print(urllib.request.urlopen(req).read().decode())
 
 
@@ -616,9 +647,10 @@ def admin_token_path(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('command', nargs='?', choices=['serve', 'accounts', 'befriend'], default='serve',
+    ap.add_argument('command', nargs='?', choices=['serve', 'accounts', 'befriend', 'unfriend'], default='serve',
                     help='serve (default); accounts: list players and friend codes; '
-                         'befriend <player id> <friend code>: make two players friends')
+                         'befriend <player id> <friend code>: make two players friends; '
+                         'unfriend <player id> <friend id>: end a friendship')
     ap.add_argument('params', nargs='*')
     ap.add_argument('--bind', default='127.0.0.1', help='address to listen on (0.0.0.0 when hosted)')
     ap.add_argument('--port', type=int, default=int(os.environ.get('PORT', 18080)),
