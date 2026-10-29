@@ -11,6 +11,7 @@
 #include "gunbros/platform/ngs_ext.h"
 #include "gunbros/platform/ngs_config.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -141,6 +142,35 @@ static void call_dialog_handler(uint32_t fn, const char *tag, const char *a, con
     run_guest(fn, tag);
 }
 
+/* An idle server can take longer than one request's timeout to wake (e.g. a free App Service
+   plan), and a sign-in sent before it answers fails for good: no friends, no Bro-Ops, and
+   Brotherhood shows only the default Bro until the game is restarted. Keep pinging for up to
+   ~2 minutes (12 tries, each up to 5 s plus 5 s apart); sign-in waits for this. */
+#define NGS_WARMUP_TRIES 12
+static int s_warmup_state = 0;  /* 0: not started, 1: waiting for a reply, 2: done */
+
+void game_hooks_ngs_warmup(void) {
+    static int s_tries = 0, s_wait_frames = 0;
+    char reply[NGS_EXT_REPLY_MAX];
+    if (s_warmup_state == 2) return;
+    if (!ngs_config_enabled()) { s_warmup_state = 2; return; }
+    if (s_warmup_state == 0) {
+        if (s_wait_frames > 0) { s_wait_frames--; return; }
+        if (ngs_ext_start("/gunbros/ping", "{}")) s_warmup_state = 1;
+    } else if (ngs_ext_poll(reply, sizeof(reply))) {
+        if (reply[0]) {
+            LOGI("[NGS] server is up");
+            s_warmup_state = 2;
+        } else if (++s_tries >= NGS_WARMUP_TRIES) {
+            LOGW("[NGS] server didn't answer the warm-up ping");
+            s_warmup_state = 2;
+        } else {
+            s_warmup_state = 0;
+            s_wait_frames = 300;  /* ~5 s, also when the connection is refused right away */
+        }
+    }
+}
+
 void game_hooks_auto_register(void) {
     static int s_done = 0, s_menu_frames = 0;
     if (s_done) return;
@@ -152,6 +182,7 @@ void game_hooks_auto_register(void) {
     guest_mem_read(gunbros + GUEST_OFF_GB_GSTATE, &gstate, 4);
     if (gstate != 5) { s_menu_frames = 0; return; }
     if (++s_menu_frames < 300) return;  /* let the main menu settle (~5 s) */
+    if (s_warmup_state != 2) return;    /* and the server wake up */
     s_done = 1;
 
     char creds[512], login[512];
@@ -233,10 +264,89 @@ static void settle_local_user(uint32_t profile) {
     }
 }
 
+static uint32_t s_friends_menu = 0;       /* the CMenuFriends the banner was tapped on */
+static int s_friends_bind_frames = 0;     /* frames left to wait before re-binding its friend list */
+#define FRIENDS_BIND_MAX_FRAMES 600
+
+/* The on-duty Bro is saved as his credentials (ActiveCred.dat). At startup
+   CFriendDataManager::FetchFriendsManagerInfo restores him only if he is already known as a
+   friend, but the friend list arrives later, after sign-in, so the built-in default Bro (no name,
+   level 0) takes his place. Once the Brothers list is in (it loads with the Bros tab), put him
+   back on duty the way tapping him does (CMenuAction::DoAction 0x65). Returns true when done. */
+static bool restore_on_duty_bro(void) {
+    uint32_t gunbros = get_gunbros(), mgr = 0, fetch = 0, pending = 0, list = 0, count = 0, items = 0;
+    uint32_t active = 0, fallback = 0;
+    if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_FRIEND_DATA_MGR, &mgr, 4);
+    if (mgr == 0) return false;
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FETCH_LIST, &fetch, 4);
+    if (fetch) guest_mem_read(fetch + GUEST_OFF_SERVER_OBJECT_PENDING, &pending, 4);
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FRIENDS, &list, 4);
+    if (list) guest_mem_read(list + GUEST_OFF_LIST_COUNT, &count, 4);
+    if (pending != 0 || count == 0) return false;
+
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_ACTIVE, &active, 4);
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_DEFAULT_BRO, &fallback, 4);
+    if (active != 0 && active != fallback) return true;  /* a Bro is already on duty */
+
+    /* Friends are told apart by client id; take it from the file (a length-prefixed JSON object). */
+    char path[512], json[512];
+    int32_t client_id = 0;
+    snprintf(path, sizeof(path), "%sActiveCred.dat", path_mapper_get_base_dir());
+    FILE *f = fopen(path, "rb");
+    if (!f) return true;
+    size_t n = fread(json, 1, sizeof(json) - 1, f);
+    fclose(f);
+    json[n] = '\0';
+    for (size_t i = 0; i < n; i++) if (json[i] == '\0') json[i] = ' ';
+    const char *id = strstr(json, "\"clientid\":");
+    if (id) client_id = (int32_t)strtol(id + 11, NULL, 10);
+    if (client_id <= 0) return true;
+
+    /* With Brotherhood open, CMenuFriends::Refresh(0x65) also shows him there, but only once the
+       menu has finished loading. */
+    uint32_t menu = 0, options = 0;
+    uint8_t bound = 0;
+    if (s_friends_menu) guest_mem_read(s_friends_menu, &menu, 4);
+    if (menu == GUEST_VTABLE_CMENUFRIENDS) {
+        guest_mem_read(s_friends_menu + GUEST_OFF_MENU_FRIENDS_OPTIONS, &options, 4);
+        guest_mem_read(s_friends_menu + GUEST_OFF_MENU_FRIENDS_LIST_BOUND, &bound, 1);
+        if (options == 0 || !bound) return false;
+    }
+
+    guest_mem_read(list + GUEST_OFF_LIST_ITEMS, &items, 4);
+    for (uint32_t i = 0; i < count && i < 256 && items; i++) {
+        uint32_t friend_data = 0;
+        int32_t friend_id = 0;
+        guest_mem_read(items + i * 4, &friend_data, 4);
+        if (friend_data) guest_mem_read(friend_data + GUEST_OFF_FRIEND_CLIENT_ID, &friend_id, 4);
+        if (friend_id != client_id) continue;
+        prepare_call_arm(gunbros + GUEST_OFF_GB_MENU_PLAYER_CONFIG);
+        dynarmic_backend_set_reg(1, friend_data + GUEST_OFF_FRIEND_AVATAR_CONFIG);
+        run_guest(GUEST_FN_PLAYER_CONFIG_ASSIGN, "friend_config");
+        if (menu == GUEST_VTABLE_CMENUFRIENDS) {
+            uint32_t refresh = 0;
+            guest_mem_read(menu + GUEST_VT_MENU_REFRESH, &refresh, 4);
+            prepare_call_arm(s_friends_menu);
+            dynarmic_backend_set_reg(1, GUEST_MENU_ACTION_SELECT_FRIEND);
+            dynarmic_backend_set_reg(2, i);
+            run_guest(refresh, "friend_select");
+        } else {
+            prepare_call_arm(mgr);
+            dynarmic_backend_set_reg(1, friend_data);
+            run_guest(GUEST_FN_FRIEND_MGR_SET_ACTIVE, "friend_set_active");
+        }
+        LOGI("[NGS] on-duty Bro restored");
+        break;
+    }
+    return true;
+}
+
 void game_hooks_ngs_profile_online(void) {
-    static int s_done = 0, s_settle_frames = 0;
+    static int s_done = 0, s_settle_frames = 0, s_frames = 0;
+    static bool s_restore = false;
     static uint32_t s_profile = 0;
     if (s_settle_frames > 0 && --s_settle_frames == 0) settle_local_user(s_profile);
+    if (s_restore && ++s_frames % 60 == 0 && restore_on_duty_bro()) s_restore = false;  /* once a second */
     if (s_done) return;
     if (!ngs_config_enabled()) { s_done = 1; return; }
 
@@ -253,6 +363,7 @@ void game_hooks_ngs_profile_online(void) {
     /* CProfileManager::LoginInitResourceLoaderCallback sets this flag at startup when the account
        is already signed in; ours signs in later, so set it the same way once it is. */
     s_done = 1;
+    s_restore = true;
     s_profile = profile;
     s_settle_frames = 600;  /* ~10 s */
 
@@ -305,9 +416,6 @@ static bool s_add_bro_hint_set = false; /* its text field shows the "enter a cod
 static uint32_t s_add_bro_message = 0;  /* our CAndroidMessagePopup while it is shown */
 static char s_add_bro_code[32];
 static char s_own_code[32];             /* the player's own friend code, once fetched */
-static uint32_t s_friends_menu = 0;       /* the CMenuFriends the banner was tapped on */
-static int s_friends_bind_frames = 0;     /* frames left to wait before re-binding its friend list */
-#define FRIENDS_BIND_MAX_FRAMES 600
 
 /* Hook a guest function that starts with `push {...}; ldr r4, [pc, #imm]` and takes
    (r0 = object, r1 = action): the bridge sees the call first (svc) and returns the action to
@@ -339,13 +447,74 @@ static bool hook_action_function(uint8_t *code_base, uint8_t *stubs_base, uint32
     return true;
 }
 
+/* Add a Bro shows "Copy" above the text field, but the popup's layout puts its third button
+   below it. Both draw callbacks take their position from the layout; route their y coordinate
+   through stubs that add an offset, which the bridge sets while the popup is ours
+   (set_add_bro_layout). The button's touch area follows where it is drawn. */
+#define LAYOUT_STUB_COPY_OFF  (HOOK_TRAMPOLINES_OFF + 3 * HOOK_TRAMPOLINE_SIZE)
+#define LAYOUT_STUB_FIELD_OFF (HOOK_TRAMPOLINES_OFF + 4 * HOOK_TRAMPOLINE_SIZE)
+/* Words: button C's y offset, the field's y offset. */
+#define LAYOUT_DATA (GUEST_STUBS_BASE + HOOK_TRAMPOLINES_OFF + 5 * HOOK_TRAMPOLINE_SIZE)
+
+static bool install_add_bro_layout(uint8_t *code_base, uint8_t *stubs_base) {
+    uint32_t *copy = (uint32_t *)(code_base + GUEST_ADDR_SEARCH_POPUP_BUTTON_C_Y);
+    uint32_t *field = (uint32_t *)(code_base + GUEST_ADDR_SEARCH_POPUP_FIELD_BOUNDS);
+    if (copy[0] != 0xe1d220f4u || copy[1] != 0xe1d310f0u ||
+        field[0] != 0xe58dc000u || (field[1] & 0xff000000u) != 0xeb000000u) {
+        LOGE("[HOOK] unexpected search popup code, Add a Bro layout unchanged");
+        return false;
+    }
+    const uint32_t copy_stub[] = {
+        0xe1d220f4u,  /* ldrsh r2, [r2, #4]    y */
+        0xe59fc010u,  /* ldr   ip, =LAYOUT_DATA */
+        0xe59c1000u,  /* ldr   r1, [ip] */
+        0xe0822001u,  /* add   r2, r2, r1 */
+        0xe1d310f0u,  /* ldrsh r1, [r3]        x */
+        0xe2800f69u,  /* add   r0, r0, #0x1a4  button C */
+        0xe59ff000u,  /* ldr   pc, =CMenuMovieButton::Draw(x, y) */
+        LAYOUT_DATA,
+        GUEST_FN_MENU_MOVIE_BUTTON_DRAW_AT,
+    };
+    const uint32_t field_stub[] = {
+        0xe58dc000u,  /* str   ip, [sp]        h */
+        0xe59fc00cu,  /* ldr   ip, =LAYOUT_DATA */
+        0xe59ce004u,  /* ldr   lr, [ip, #4] */
+        0xe082200eu,  /* add   r2, r2, lr      y */
+        0xe59fe004u,  /* ldr   lr, =return address */
+        0xe59ff004u,  /* ldr   pc, =CAndroidUiTextField::SetBounds(x, y, w, h) */
+        LAYOUT_DATA,
+        GUEST_ADDR_SEARCH_POPUP_FIELD_RET,
+        GUEST_FN_UI_TEXT_FIELD_SET_BOUNDS,
+    };
+    memcpy(stubs_base + LAYOUT_STUB_COPY_OFF, copy_stub, sizeof(copy_stub));
+    memcpy(stubs_base + LAYOUT_STUB_FIELD_OFF, field_stub, sizeof(field_stub));
+    memset(stubs_base + (LAYOUT_DATA - GUEST_STUBS_BASE), 0, 8);
+    copy[0] = field[0] = 0xe51ff004u;  /* ldr pc, [pc, #-4] */
+    copy[1] = GUEST_STUBS_BASE + LAYOUT_STUB_COPY_OFF;
+    field[1] = GUEST_STUBS_BASE + LAYOUT_STUB_FIELD_OFF;
+    return true;
+}
+
+/* Swap the field and the Copy button in our popup (install_add_bro_layout); other uses of the
+   popup keep its layout. The field's Android view takes its bounds once, on its first draw
+   (GluTextBox.SetBounds adds the view), so this must be set before the popup is drawn. */
+static void set_add_bro_layout(bool ours) {
+    int32_t offsets[2] = { 0, 0 };
+    if (ours) {
+        offsets[0] = -GUEST_SEARCH_POPUP_FIELD_TO_BUTTON_C;
+        offsets[1] = GUEST_SEARCH_POPUP_FIELD_TO_BUTTON_C;
+    }
+    guest_mem_write(LAYOUT_DATA, offsets, sizeof(offsets));
+}
+
 bool game_hooks_install(uint8_t *code_base, uint8_t *stubs_base) {
     bool ok = hook_action_function(code_base, stubs_base, GUEST_FN_MENU_DO_ACTION,
                                    HOOK_SVC_MENU_ACTION, 0)
            && hook_action_function(code_base, stubs_base, GUEST_FN_SEARCH_POPUP_REFRESH,
                                    HOOK_SVC_SEARCH_POPUP_ACTION, 1)
            && hook_action_function(code_base, stubs_base, GUEST_FN_MESSAGE_POPUP_REFRESH,
-                                   HOOK_SVC_MESSAGE_POPUP_ACTION, 2);
+                                   HOOK_SVC_MESSAGE_POPUP_ACTION, 2)
+           && install_add_bro_layout(code_base, stubs_base);
     LOGI("[HOOK] menu action hooks %s", ok ? "installed" : "NOT installed");
     return ok;
 }
@@ -394,6 +563,7 @@ void game_hooks_on_svc(uint32_t idx) {
             guest_mem_read(object + GUEST_OFF_SEARCH_POPUP_FIELD, &field, 4);
             read_text_field(field, s_add_bro_code, sizeof(s_add_bro_code));
             s_add_bro_popup = 0;
+            set_add_bro_layout(false);
             if (action == GUEST_POPUP_ACTION_COPY) {
                 s_add_bro_state = ADD_BRO_COPY;
             } else {
@@ -448,6 +618,7 @@ static uint32_t current_mid_popup(void) {
 static void show_add_bro_popup(const char *title) {
     const uint32_t args[] = { guest_cstrwchar(title), GUEST_POPUP_BUTTON_CANCEL,
                               GUEST_POPUP_BUTTON_ADD_BUDDY, GUEST_POPUP_BUTTON_COPY, (uint32_t)-1 };
+    set_add_bro_layout(true);
     call_guest_args(GUEST_FN_SHOW_SEARCH_POPUP, "add_bro_popup", args, 5);
     s_add_bro_popup = current_mid_popup();
     s_add_bro_hint_set = false;
@@ -571,6 +742,7 @@ void game_hooks_add_bro(void) {
         /* Closed some other way (e.g. back key): forget it. */
         if (s_add_bro_popup != 0 && current_mid_popup() != s_add_bro_popup) {
             s_add_bro_popup = 0;
+            set_add_bro_layout(false);
             s_add_bro_state = ADD_BRO_IDLE;
         }
         break;
@@ -620,19 +792,6 @@ void game_hooks_add_bro(void) {
 
     default:
         break;
-    }
-}
-
-void game_hooks_ngs_warmup(void) {
-    static int s_state = 0;  /* 0: not started, 1: waiting for the reply, 2: done */
-    char reply[NGS_EXT_REPLY_MAX];
-    if (s_state == 2) return;
-    if (!ngs_config_enabled()) { s_state = 2; return; }
-    if (s_state == 0) {
-        if (ngs_ext_start("/gunbros/ping", "{}")) s_state = 1;
-    } else if (ngs_ext_poll(reply, sizeof(reply))) {
-        LOGI("[NGS] server %s", reply[0] ? "is up" : "didn't answer the warm-up ping");
-        s_state = 2;
     }
 }
 

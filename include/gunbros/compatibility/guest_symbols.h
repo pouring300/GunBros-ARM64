@@ -222,6 +222,7 @@
 #define GUEST_MENU_ACTION_NONE               0x9fu        /* DoAction: default case, does nothing */
 #define GUEST_MENU_ACTION_FRIEND_LIST_UPDATED 0x58u       /* CProfileManager::HandleFriendListUpdate -> current menu */
 #define GUEST_MENU_ACTION_FRIENDS_RESET      0x61u        /* sent by CMenuFriends::Reset */
+#define GUEST_MENU_ACTION_SELECT_FRIEND      0x65u        /* Brotherhood: put Bro n on duty (a tap on him) */
 #define GUEST_MENU_ACTION_SOCIAL             0x55u        /* social network button; argument = network */
 #define GUEST_SOCIAL_NETWORK_FACEBOOK        2u
 /* Where the Facebook buttons lead now: the restoration community's Discord. */
@@ -230,8 +231,19 @@
 #define GUEST_VT_MENU_REFRESH                0x1cu        /* CMenu vtable: Refresh(MenuAction, int) */
 #define GUEST_MENU_REFRESH_BIND              0x2bu        /* Refresh action sent once a menu's data has loaded */
 #define GUEST_OFF_MENU_FRIENDS_LIST_BOUND    0x1099u      /* CMenuFriends: friend list bound (Refresh 0x2b skips it if set) */
+#define GUEST_OFF_MENU_FRIENDS_OPTIONS       0x1f4u       /* CMenuFriends -> on-duty Bro panel; null until the menu is loaded */
 #define GUEST_OFF_GB_FRIEND_DATA_MGR         0x34u        /* GunBros -> CFriendDataManager* */
 #define GUEST_OFF_FRIEND_MGR_FETCH_LIST      0xb4u        /* CFriendDataManager -> friends being fetched (CNGSRemoteUserList*) */
+#define GUEST_OFF_FRIEND_MGR_FRIENDS         0xb0u        /* CFriendDataManager -> the Brothers list (count +0x1c, CFriendData** +0x28) */
+#define GUEST_OFF_FRIEND_MGR_ACTIVE          0xb8u        /* CFriendDataManager -> on-duty Bro (CFriendData*) */
+#define GUEST_OFF_FRIEND_MGR_DEFAULT_BRO     0xecu        /* CFriendDataManager -> built-in default Bro */
+#define GUEST_OFF_LIST_COUNT                 0x1cu        /* CNGSRemoteUserList: number of entries */
+#define GUEST_OFF_LIST_ITEMS                 0x28u        /* CNGSRemoteUserList: entry pointer array */
+#define GUEST_OFF_FRIEND_CLIENT_ID           0x18u        /* CFriendData: credentials, client id first */
+#define GUEST_OFF_FRIEND_AVATAR_CONFIG       0xe8u        /* CFriendData: CPlayerConfiguration */
+#define GUEST_OFF_GB_MENU_PLAYER_CONFIG      0x268u       /* GunBros: CPlayerConfiguration the menus' 3D Bro shows */
+#define GUEST_FN_FRIEND_MGR_SET_ACTIVE       0x002aa3dcu  /* CFriendDataManager::SetActiveFriend(CFriendData*) */
+#define GUEST_FN_PLAYER_CONFIG_ASSIGN        0x0034808cu  /* CPlayerConfiguration::operator=(const CPlayerConfiguration&) */
 #define GUEST_OFF_SERVER_OBJECT_PENDING      0x08u        /* CNGSServerObject: outstanding requests (isReady when 0) */
 #define GUEST_FN_SERVER_OBJECT_COMPLETE_READ 0x00424e54u  /* CNGSServerObject::CompleteReadRequestOutstanding() */
 #define GUEST_FN_NGS_UPDATE_FRIEND_LIST      0x00411e28u  /* CNGSLocalUser::UpdateFriendListFromServer() */
@@ -241,6 +253,12 @@
 #define GUEST_FN_MESSAGE_POPUP_REFRESH       0x0025f6e8u  /* CAndroidMessagePopup::RefreshMidMenuPopup(popup, MenuAction) */
 #define GUEST_OFF_SEARCH_POPUP_FIELD         0xf8u        /* CAndroidSearchPopup -> CAndroidUiTextField* */
 #define GUEST_OFF_SEARCH_POPUP_BUTTON_C      0x1a4u       /* CAndroidSearchPopup -> third CMenuMovieButton */
+#define GUEST_ADDR_SEARCH_POPUP_BUTTON_C_Y   0x002602f8u  /* ButtonCCallback: ldrsh r2, [rect, #4] (y); ldrsh r1, [rect] */
+#define GUEST_ADDR_SEARCH_POPUP_FIELD_BOUNDS 0x00260378u  /* SearchFieldCallback: str ip, [sp]; bl SetBounds(x, y, w, h) */
+#define GUEST_ADDR_SEARCH_POPUP_FIELD_RET    0x00260380u  /* SearchFieldCallback, after that call */
+#define GUEST_FN_MENU_MOVIE_BUTTON_DRAW_AT   0x00317720u  /* CMenuMovieButton::Draw(short x, short y) */
+#define GUEST_FN_UI_TEXT_FIELD_SET_BOUNDS    0x00261994u  /* CAndroidUiTextField::SetBounds(x, y, w, h) */
+#define GUEST_SEARCH_POPUP_FIELD_TO_BUTTON_C 43           /* layout: button C is this far below the field (y 273 -> 316) */
 #define GUEST_OFF_MENU_BUTTON_LABEL          0x3cu        /* CMenuMovieButton -> label (CStrWChar*, owned) */
 #define GUEST_FN_NP_MALLOC                   0x00165480u  /* np_malloc(size) */
 #define GUEST_OFF_TEXT_FIELD_OBJECT          0x18u        /* CAndroidUiTextField -> GluTextBox jobject (bridge text box handle) */
