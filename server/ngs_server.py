@@ -103,15 +103,29 @@ class Accounts:
         with self.lock:
             if recipient_id not in sender.get('friends', []):
                 return False
-            inbox = [m for m in self.data.setdefault('messages', []) if m['recipientid'] == recipient_id]
+            now = int(time.time())
+            expires = now + max(60, min(duration, MAX_MESSAGE_DURATION))
+            inbox = [m for m in self.data.setdefault('messages', [])
+                     if m['recipientid'] == recipient_id and m['expires'] > now]
+            # Every mission played with a friend's Bro sends that friend an XP gift; add it to
+            # an unread one from the same player instead of filling their inbox (Bro-Ops
+            # messages would be turned away once it is full).
+            if msg_type == MESSAGE_XP_GIFT:
+                xp = xp_gift_amount(text)
+                pending = next((m for m in inbox if m['type'] == MESSAGE_XP_GIFT and
+                                m['senderid'] == sender['id']), None)
+                if xp is not None and pending is not None and xp_gift_amount(pending['message']) is not None:
+                    pending['message'] = json.dumps({'xp': xp_gift_amount(pending['message']) + xp})
+                    pending['expires'] = max(pending['expires'], expires)
+                    self._save()
+                    return True
             if len(inbox) >= MAX_PENDING_MESSAGES:
                 return False
             self.data['next_message_id'] = self.data.get('next_message_id', 1) + 1
-            now = int(time.time())
             self.data['messages'].append({
                 'id': self.data['next_message_id'] - 1, 'senderid': sender['id'],
                 'senderGamertag': sender['gamertag'], 'recipientid': recipient_id, 'type': msg_type,
-                'message': text, 'expires': now + max(60, min(duration, MAX_MESSAGE_DURATION))})
+                'message': text, 'expires': expires})
             self._save()
             return True
 
@@ -303,10 +317,21 @@ def friend_search(message):
 
 # Messages between friends (resources/message/*). Bro-Ops uses them: recruiting a Bro posts
 # {"challenge", "progress", "timeRange"} (type 1005) to them, and their game replies the same way.
-# The server only relays them between friends; it doesn't read them.
+# A mission played with a friend's Bro on duty sends that friend an XP gift (type 1001). The
+# server only relays them between friends; apart from adding up XP gifts it doesn't read them.
 MAX_PENDING_MESSAGES = 100        # per recipient
+MESSAGE_XP_GIFT = 1001            # {"xp": N}: XP a friend's Bro earned in your mission
 MAX_MESSAGE_DURATION = 7 * 86400  # seconds
 MAX_MESSAGE_TEXT = 2048
+
+
+def xp_gift_amount(text):
+    """The XP in an XP gift message, or None if it isn't one."""
+    try:
+        xp = json.loads(text).get('xp')
+    except (ValueError, AttributeError):
+        return None
+    return xp if isinstance(xp, int) and not isinstance(xp, bool) and 0 <= xp < 1 << 30 else None
 
 
 def message_caller(message):
