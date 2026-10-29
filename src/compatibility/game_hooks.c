@@ -264,9 +264,20 @@ static void settle_local_user(uint32_t profile) {
     }
 }
 
-static uint32_t s_friends_menu = 0;       /* the CMenuFriends the banner was tapped on */
-static int s_friends_bind_frames = 0;     /* frames left to wait before re-binding its friend list */
-#define FRIENDS_BIND_MAX_FRAMES 600
+static uint32_t s_friends_menu = 0;       /* Brotherhood (CMenuFriends), once it has been shown */
+
+/* The menu currently on screen (as CMenuSystem::BindMenu finds it). */
+static uint32_t current_menu(void) {
+    uint32_t gunbros = get_gunbros(), menu_sys = 0, branch = 0, menu = 0;
+    if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_MENUSYS, &menu_sys, 4);
+    if (menu_sys == 0) return 0;
+    guest_mem_read(menu_sys + GUEST_OFF_MENU_SYS_BRANCH, &branch, 4);
+    if (branch == GUEST_MENU_BRANCH_POPUP) guest_mem_read(menu_sys + GUEST_OFF_MENU_SYS_PREV_BRANCH, &branch, 4);
+    if (branch > 0x20) return 0;
+    guest_mem_read(menu_sys + GUEST_OFF_MENU_SYS_STACKS + branch * GUEST_MENU_STACK_SIZE + GUEST_OFF_MENU_STACK_MENU,
+                   &menu, 4);
+    return menu;
+}
 
 /* The on-duty Bro is saved as his credentials (ActiveCred.dat). At startup
    CFriendDataManager::FetchFriendsManagerInfo restores him only if he is already known as a
@@ -302,11 +313,11 @@ static bool restore_on_duty_bro(void) {
     if (id) client_id = (int32_t)strtol(id + 11, NULL, 10);
     if (client_id <= 0) return true;
 
-    /* With Brotherhood open, CMenuFriends::Refresh(0x65) also shows him there, but only once the
-       menu has finished loading. */
+    /* With Brotherhood on screen, CMenuFriends::Refresh(0x65) also shows him there, but only once
+       the menu has finished loading. */
     uint32_t menu = 0, options = 0;
     uint8_t bound = 0;
-    if (s_friends_menu) guest_mem_read(s_friends_menu, &menu, 4);
+    if (s_friends_menu && current_menu() == s_friends_menu) guest_mem_read(s_friends_menu, &menu, 4);
     if (menu == GUEST_VTABLE_CMENUFRIENDS) {
         guest_mem_read(s_friends_menu + GUEST_OFF_MENU_FRIENDS_OPTIONS, &options, 4);
         guest_mem_read(s_friends_menu + GUEST_OFF_MENU_FRIENDS_LIST_BOUND, &bound, 1);
@@ -541,13 +552,9 @@ void game_hooks_on_svc(uint32_t idx) {
             action = GUEST_MENU_ACTION_NONE;
             break;
         }
-        /* Brotherhood loses its list whenever the friend list is reloaded mid-session (see
-           bind_friends_menu): after the game's reload notice (0x58, sent to the current menu)
-           and whenever the tab resets (0x61), re-bind it once the friends' data is in. */
-        if (vtable == GUEST_VTABLE_CMENUFRIENDS &&
-            (action == GUEST_MENU_ACTION_FRIEND_LIST_UPDATED || action == GUEST_MENU_ACTION_FRIENDS_RESET)) {
+        /* Remember Brotherhood for sync_friends_menu: it sends 0x61 whenever the tab resets. */
+        if (vtable == GUEST_VTABLE_CMENUFRIENDS && action == GUEST_MENU_ACTION_FRIENDS_RESET) {
             s_friends_menu = object;
-            s_friends_bind_frames = FRIENDS_BIND_MAX_FRAMES;
         }
         if (action == GUEST_MENU_ACTION_MENU_SPECIFIC && dynarmic_backend_get_reg(2) == 0 &&
             vtable == GUEST_VTABLE_CMENUFRIENDS) {
@@ -670,27 +677,36 @@ static bool read_session_id(char *out, size_t out_size) {
     return i > 0;
 }
 
-/* After a friend-list reload the game refreshes Brotherhood (CProfileManager::HandleFriendListUpdate
-   -> MenuAction 0x58 -> CMenuFriends::RefreshFriendsList), which fetches the friends' data
-   asynchronously. On a normal menu load the menu stack then sends 0x2b (CMenuStack::BindMenu) to
-   bind the populated list; mid-session nothing does, so the list stays empty. Bind it ourselves
-   once the data has arrived. */
-static void bind_friends_menu(void) {
-    if (s_friends_bind_frames == 0) return;
-    s_friends_bind_frames--;
-    /* Wait (at least ~1 s, at most ~10 s) for the friend manager's fetch to finish. */
-    uint32_t gunbros = get_gunbros(), mgr = 0, fetch = 0, pending = 0;
+/* Brotherhood reloads its friends whenever it is shown again or the friend list changes
+   (CMenuFriends::Update -> CMenuDataProvider::LoadData). The menu system binds the list as soon
+   as the loader has *started* the fetch (CFriendDataManager::FriendListFetchLoader), so with a
+   server that takes a moment to answer it binds an empty list, and nothing binds it again once
+   the friends arrive: the Brothers section stays empty, and the menu counts as busy (ignores
+   taps) while its list isn't bound. When Brotherhood is on screen, its fetch is done and its list
+   shows a different number of friends than the game has, bind the list again, as
+   CMenuFriends::Update does before a reload. */
+static void sync_friends_menu(void) {
+    static int s_frames = 0;
+    if (s_friends_menu == 0 || ++s_frames % 10) return;
+    uint32_t vtable = 0, gunbros = get_gunbros(), mgr = 0, fetch = 0, pending = 0, list = 0, count = 0, rows = 0;
+    uint8_t reload = 0, bound = 0;
+    guest_mem_read(s_friends_menu, &vtable, 4);
+    if (vtable != GUEST_VTABLE_CMENUFRIENDS || current_menu() != s_friends_menu) return;
+    guest_mem_read(s_friends_menu + GUEST_OFF_MENU_FRIENDS_RELOAD, &reload, 1);
+    guest_mem_read(s_friends_menu + GUEST_OFF_MENU_FRIENDS_LIST_BOUND, &bound, 1);
+    if (reload || !bound) return;  /* the game is (re)loading it itself */
     if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_FRIEND_DATA_MGR, &mgr, 4);
-    if (mgr) guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FETCH_LIST, &fetch, 4);
+    if (mgr == 0) return;
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FETCH_LIST, &fetch, 4);
     if (fetch) guest_mem_read(fetch + GUEST_OFF_SERVER_OBJECT_PENDING, &pending, 4);
-    if (s_friends_bind_frames > FRIENDS_BIND_MAX_FRAMES - 60 || (pending != 0 && s_friends_bind_frames > 0)) return;
-    s_friends_bind_frames = 0;
-    uint32_t vtable = 0, refresh = 0;
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FRIENDS, &list, 4);
+    if (list) guest_mem_read(list + GUEST_OFF_LIST_COUNT, &count, 4);
+    guest_mem_read(s_friends_menu + GUEST_OFF_MENU_FRIENDS_ROWS, &rows, 4);
+    if (pending != 0 || rows == count) return;
+
+    uint32_t refresh = 0;
     uint8_t unbound = 0;
-    if (s_friends_menu) guest_mem_read(s_friends_menu, &vtable, 4);
-    if (vtable != GUEST_VTABLE_CMENUFRIENDS) return;
-    /* Refresh(0x2b) only binds a list that isn't bound yet; CMenuFriends::Update clears this flag
-       the same way before it reloads the list. */
+    LOGI("[NGS] Brotherhood shows %u of %u Bros, binding its list again", rows, count);
     guest_mem_write(s_friends_menu + GUEST_OFF_MENU_FRIENDS_LIST_BOUND, &unbound, 1);
     guest_mem_read(vtable + GUEST_VT_MENU_REFRESH, &refresh, 4);
     prepare_call_arm(s_friends_menu);
@@ -702,7 +718,7 @@ static void bind_friends_menu(void) {
 void game_hooks_add_bro(void) {
     char session[64], body[160], reply[NGS_EXT_REPLY_MAX], text[128];
 
-    bind_friends_menu();
+    sync_friends_menu();
 
     switch (s_add_bro_state) {
     case ADD_BRO_REQUESTED:
@@ -779,7 +795,6 @@ void game_hooks_add_bro(void) {
             if (local_user) {
                 prepare_call_arm(local_user);
                 run_guest(GUEST_FN_NGS_UPDATE_FRIEND_LIST, "ngs_friends");
-                s_friends_bind_frames = FRIENDS_BIND_MAX_FRAMES;
             }
         } else if (ngs_ext_json_string(reply, "error", error, sizeof(error))) {
             show_add_bro_message("Add a Bro", error);

@@ -103,6 +103,12 @@
 #define GUEST_OFF_SESSION_TIME_START_MS   0x28u /* CNGSSession -> network time base (u64 ms) */
 #define GUEST_OFF_SESSION_TIME_NOW_MS     0x30u /* CNGSSession -> network time now (u64 ms, 0 = invalid) */
 #define GUEST_OFF_MENU_TOP                256u  /* MenuSystem -> m_pTopMenu */
+#define GUEST_OFF_MENU_SYS_BRANCH         0x59cu /* CMenuSystem: current menu branch */
+#define GUEST_OFF_MENU_SYS_PREV_BRANCH    0x598u /* CMenuSystem: branch under a popup */
+#define GUEST_MENU_BRANCH_POPUP           0xbu
+#define GUEST_OFF_MENU_SYS_STACKS         0x98u  /* CMenuSystem: one CMenuStack per branch */
+#define GUEST_MENU_STACK_SIZE             0x80u
+#define GUEST_OFF_MENU_STACK_MENU         0x68u  /* CMenuStack -> current CMenu */
 
 /* ========================================================================= */
 /* Binary Patch Addresses & Trampolines                                      */
@@ -230,7 +236,9 @@
 #define GUEST_VTABLE_CMENUFRIENDS            0x004c1938u  /* Brotherhood menu */
 #define GUEST_VT_MENU_REFRESH                0x1cu        /* CMenu vtable: Refresh(MenuAction, int) */
 #define GUEST_MENU_REFRESH_BIND              0x2bu        /* Refresh action sent once a menu's data has loaded */
+#define GUEST_OFF_MENU_FRIENDS_RELOAD        0x1098u      /* CMenuFriends: friend list reload requested (RefreshFriendsList) */
 #define GUEST_OFF_MENU_FRIENDS_LIST_BOUND    0x1099u      /* CMenuFriends: friend list bound (Refresh 0x2b skips it if set) */
+#define GUEST_OFF_MENU_FRIENDS_ROWS          0x1d4u       /* CMenuFriends: friends in the bound list (its option group's count) */
 #define GUEST_OFF_MENU_FRIENDS_OPTIONS       0x1f4u       /* CMenuFriends -> on-duty Bro panel; null until the menu is loaded */
 #define GUEST_OFF_GB_FRIEND_DATA_MGR         0x34u        /* GunBros -> CFriendDataManager* */
 #define GUEST_OFF_FRIEND_MGR_FETCH_LIST      0xb4u        /* CFriendDataManager -> friends being fetched (CNGSRemoteUserList*) */
