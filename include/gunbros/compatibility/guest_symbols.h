@@ -100,6 +100,9 @@
 #define GUEST_PROFILE_STORE_COUNT         20
 #define GUEST_PROFILE_STORE_CHANGED       1u
 #define GUEST_PROFILE_STORE_LOAD_FROM_SERVER 4u
+#define GUEST_FN_PROFILE_SAVE             0x0035c528u /* CProfileManager::Save(store, loader, no_upload): saves, and uploads when signed in */
+#define GUEST_PROFILE_STORE_PROGRESS      1000u /* CPlayerProgress: level, XP (public part) */
+#define GUEST_PROFILE_STORE_CONFIG        1001u /* CPlayerConfiguration: character and loadout */
 #define GUEST_OFF_SESSION_TIME_START_MS   0x28u /* CNGSSession -> network time base (u64 ms) */
 #define GUEST_OFF_SESSION_TIME_NOW_MS     0x30u /* CNGSSession -> network time now (u64 ms, 0 = invalid) */
 #define GUEST_OFF_MENU_TOP                256u  /* MenuSystem -> m_pTopMenu */

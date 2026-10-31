@@ -426,11 +426,28 @@ static void sync_bro_usage(void) {
     fclose(f);
 }
 
+/* Friends only see a player in Brotherhood once the player's progress and loadout are on the
+   server (CFriendDataManager::HandleFriendListPopulated needs both). The game uploads a data store
+   whenever it saves it (CProfileManager::Save), but only saves after things like a mission or a
+   loadout change, so a new player could stay invisible to their Bros. Save the two public stores
+   once after sign-in; the server keeps only what friends see. */
+static void upload_public_profile(uint32_t profile) {
+    static const uint32_t stores[] = { GUEST_PROFILE_STORE_PROGRESS, GUEST_PROFILE_STORE_CONFIG };
+    for (size_t i = 0; i < sizeof(stores) / sizeof(stores[0]); i++) {
+        prepare_call_arm(profile);
+        dynarmic_backend_set_reg(1, stores[i]);
+        dynarmic_backend_set_reg(2, 0);
+        dynarmic_backend_set_reg(3, 0);
+        run_guest(GUEST_FN_PROFILE_SAVE, "profile_upload");
+    }
+}
+
 void game_hooks_ngs_profile_online(void) {
-    static int s_done = 0, s_settle_frames = 0, s_frames = 0;
+    static int s_done = 0, s_settle_frames = 0, s_frames = 0, s_upload_frames = 0;
     static bool s_restore = false;
     static uint32_t s_profile = 0;
     if (s_settle_frames > 0 && --s_settle_frames == 0) settle_local_user(s_profile);
+    if (s_upload_frames > 0 && --s_upload_frames == 0) upload_public_profile(s_profile);
     if (s_done && ++s_frames % 60 == 0) {  /* once a second */
         sync_bro_usage();
         if (s_restore && restore_on_duty_bro()) s_restore = false;
@@ -454,6 +471,7 @@ void game_hooks_ngs_profile_online(void) {
     s_restore = true;
     s_profile = profile;
     s_settle_frames = 600;  /* ~10 s */
+    s_upload_frames = 120;  /* ~2 s */
 
     /* The save files are the only copy of the player's progress; the server only keeps what
        friends see. Data stores waiting to be reloaded from the server (status 4) would never be
