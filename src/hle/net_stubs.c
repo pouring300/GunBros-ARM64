@@ -331,6 +331,16 @@ static void h_bind(hle_t *c) {
     }
     int ret = bind(fd, addr, len);
     char a[64], l[64];
+    /* GameSpy binds a fixed UDP port (4747). A second copy of the game (e.g. in another Android
+       profile) can't get it, and GameSpy's error path then crashes; any free port does as well
+       behind NAT. */
+    if (ret < 0 && errno == EADDRINUSE && addr && addr->sa_family == AF_INET &&
+        len >= (socklen_t)sizeof(struct sockaddr_in) && ((const struct sockaddr_in *)addr)->sin_port != 0) {
+        struct sockaddr_in any_port = *(const struct sockaddr_in *)addr;
+        any_port.sin_port = 0;
+        LOGW("[NET:bind] fd=%d %s is in use, binding to a free port", fd, fmt_sockaddr(addr, a, sizeof(a)));
+        ret = bind(fd, (const struct sockaddr *)&any_port, sizeof(any_port));
+    }
     if (ret < 0) {
         set_guest_errno(errno);
         c->r0 = (uint32_t)-1;
