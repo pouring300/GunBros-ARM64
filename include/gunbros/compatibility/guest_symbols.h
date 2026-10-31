@@ -255,6 +255,18 @@
 #define GUEST_OFF_FRIEND_LAST_USED           0x7cu        /* CFriendData: network time (s) he was last used; a gift is due 24 h later */
 #define GUEST_OFF_GB_MENU_PLAYER_CONFIG      0x268u       /* GunBros: CPlayerConfiguration the menus' 3D Bro shows */
 #define GUEST_FN_FRIEND_MGR_SET_ACTIVE       0x002aa3dcu  /* CFriendDataManager::SetActiveFriend(CFriendData*) */
+#define GUEST_FN_FRIEND_MGR_SET_DEFAULT      0x002aa2ccu  /* CFriendDataManager::SetActiveToDefault() */
+#define GUEST_FN_FRIEND_MGR_INIT_DEFAULT_BRO 0x002ab2a4u  /* CFriendDataManager::InitDefaultBrother(const CPlayerConfiguration*): name + loadout */
+#define GUEST_FN_GAMEFLOW_RESET_BRO_CONFIG   0x002afa60u  /* CGameFlow::ResetBrotherConfiguration(): base loadout, the other Gun Bro */
+#define GUEST_OFF_GB_GAMEFLOW                0x150u       /* GunBros: CGameFlow (embedded) */
+#define GUEST_OFF_GB_BRO_CONFIG              0x1e4u       /* GunBros: the Bro's CPlayerConfiguration (set up by CGameFlow) */
+#define GUEST_OFF_FRIEND_MGR_FETCH_BATCH     0xf6u        /* CFriendDataManager: u16, friends in the last fetched batch (list rows) */
+#define GUEST_VTABLE_CMENUCHALLENGES         0x0049a780u  /* Bro-Ops menu */
+#define GUEST_OFF_MENU_CHALLENGES_RELOAD     0x2028u      /* CMenuChallenges: list reload in progress */
+#define GUEST_OFF_MENU_CHALLENGES_BOUND      0x202bu      /* CMenuChallenges: recruit list bound (1) */
+#define GUEST_OFF_MENU_CHALLENGES_SHOWN      0x202eu      /* CMenuChallenges: on screen */
+#define GUEST_OFF_MENU_CHALLENGES_ROWS       0xa18u       /* CMenuChallenges: rows in the recruit list, end caps included */
+#define GUEST_OFF_MENU_CHALLENGES_CAPS       0xa2cu       /* CMenuChallenges: two bytes, set when the list has a top/bottom end cap row */
 #define GUEST_FN_PLAYER_CONFIG_ASSIGN        0x0034808cu  /* CPlayerConfiguration::operator=(const CPlayerConfiguration&) */
 #define GUEST_OFF_SERVER_OBJECT_PENDING      0x08u        /* CNGSServerObject: outstanding requests (isReady when 0) */
 #define GUEST_FN_SERVER_OBJECT_COMPLETE_READ 0x00424e54u  /* CNGSServerObject::CompleteReadRequestOutstanding() */

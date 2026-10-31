@@ -426,6 +426,41 @@ static void sync_bro_usage(void) {
     fclose(f);
 }
 
+/* The default Bro stands in when no Bro is on duty: the other Gun Bro, at level 1, with the base
+   weapons. The game sets him up in a resource-loader step that runs once the friend list is ready
+   (CFriendDataManager::FriendsManagerInfoLoad, queued by FetchFriendsManagerInfo); the bridge's
+   loader patch (GUEST_PATCH_RESLOADER_LOADNEXT) drops steps that aren't ready on their first try,
+   so it never ran: nobody was on duty, and Brotherhood showed an empty slot (no name, "LEVEL 0")
+   with an all-zero loadout, which the mission partner used too. Do what that step does. */
+void game_hooks_default_bro(void) {
+    static int s_done = 0, s_menu_frames = 0;
+    if (s_done) return;
+    uint32_t gunbros = get_gunbros(), gstate = 0, mgr = 0, fallback = 0, active = 0;
+    if (gunbros == 0) return;
+    guest_mem_read(gunbros + GUEST_OFF_GB_GSTATE, &gstate, 4);
+    if (gstate != 5) { s_menu_frames = 0; return; }
+    if (++s_menu_frames < 60) return;  /* the profile (the player's Gun Bro) is loaded by now */
+    guest_mem_read(gunbros + GUEST_OFF_GB_FRIEND_DATA_MGR, &mgr, 4);
+    if (mgr) guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_DEFAULT_BRO, &fallback, 4);
+    if (fallback == 0) return;
+    s_done = 1;
+
+    prepare_call_arm(gunbros + GUEST_OFF_GB_GAMEFLOW);
+    run_guest(GUEST_FN_GAMEFLOW_RESET_BRO_CONFIG, "bro_config");
+    prepare_call_arm(mgr);
+    dynarmic_backend_set_reg(1, gunbros + GUEST_OFF_GB_BRO_CONFIG);
+    run_guest(GUEST_FN_FRIEND_MGR_INIT_DEFAULT_BRO, "default_bro");
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_ACTIVE, &active, 4);
+    if (active != 0 && active != fallback) return;  /* a Bro is on duty already */
+    prepare_call_arm(mgr);
+    run_guest(GUEST_FN_FRIEND_MGR_SET_DEFAULT, "default_bro_on_duty");
+    /* The menus' 3D Bro shows the on-duty Bro's look (as MenuAction 0x61 sets it). */
+    prepare_call_arm(gunbros + GUEST_OFF_GB_MENU_PLAYER_CONFIG);
+    dynarmic_backend_set_reg(1, fallback + GUEST_OFF_FRIEND_AVATAR_CONFIG);
+    run_guest(GUEST_FN_PLAYER_CONFIG_ASSIGN, "default_bro_look");
+    LOGI("[NGS] default Bro on duty");
+}
+
 /* Friends only see a player in Brotherhood once the player's progress and loadout are on the
    server (CFriendDataManager::HandleFriendListPopulated needs both). The game uploads a data store
    whenever it saves it (CProfileManager::Save), but only saves after things like a mission or a
@@ -810,10 +845,46 @@ static void sync_friends_menu(void) {
     run_guest(refresh, "friends_bind");
 }
 
+/* Bro-Ops' recruit list has the same problem as Brotherhood (sync_friends_menu): it is bound
+   before the friends' fetch finishes and not again, so Bros can be missing from it. While Bro-Ops
+   is on screen and the fetch is done, bind it again if it shows a different number of Bros than
+   the fetch found. */
+static void sync_challenges_menu(void) {
+    static int s_frames = 0;
+    if (++s_frames % 10) return;
+    uint32_t menu = current_menu(), vtable = 0, gunbros = get_gunbros(), mgr = 0, fetch = 0, pending = 0;
+    uint32_t rows = 0, refresh = 0;
+    uint16_t batch = 0;
+    uint8_t reload = 0, bound = 0, shown = 0, caps[2] = { 0, 0 };
+    if (menu) guest_mem_read(menu, &vtable, 4);
+    if (vtable != GUEST_VTABLE_CMENUCHALLENGES) return;
+    guest_mem_read(menu + GUEST_OFF_MENU_CHALLENGES_RELOAD, &reload, 1);
+    guest_mem_read(menu + GUEST_OFF_MENU_CHALLENGES_BOUND, &bound, 1);
+    guest_mem_read(menu + GUEST_OFF_MENU_CHALLENGES_SHOWN, &shown, 1);
+    if (reload || bound != 1 || !shown) return;
+    if (gunbros) guest_mem_read(gunbros + GUEST_OFF_GB_FRIEND_DATA_MGR, &mgr, 4);
+    if (mgr == 0) return;
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FETCH_LIST, &fetch, 4);
+    if (fetch) guest_mem_read(fetch + GUEST_OFF_SERVER_OBJECT_PENDING, &pending, 4);
+    if (pending != 0) return;
+    guest_mem_read(mgr + GUEST_OFF_FRIEND_MGR_FETCH_BATCH, &batch, 2);
+    guest_mem_read(menu + GUEST_OFF_MENU_CHALLENGES_ROWS, &rows, 4);
+    guest_mem_read(menu + GUEST_OFF_MENU_CHALLENGES_CAPS, caps, 2);
+    rows -= (caps[0] != 0) + (caps[1] != 0);
+    if (rows == batch) return;
+    LOGI("[NGS] Bro-Ops shows %u of %u Bros, binding its recruit list again", rows, batch);
+    guest_mem_read(vtable + GUEST_VT_MENU_REFRESH, &refresh, 4);
+    prepare_call_arm(menu);
+    dynarmic_backend_set_reg(1, GUEST_MENU_REFRESH_BIND);
+    dynarmic_backend_set_reg(2, (uint32_t)-1);
+    run_guest(refresh, "challenges_bind");
+}
+
 void game_hooks_add_bro(void) {
     char session[64], body[160], reply[NGS_EXT_REPLY_MAX], text[128];
 
     sync_friends_menu();
+    sync_challenges_menu();
 
     switch (s_add_bro_state) {
     case ADD_BRO_REQUESTED:

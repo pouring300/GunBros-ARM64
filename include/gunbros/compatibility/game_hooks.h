@@ -46,6 +46,12 @@ void game_hooks_auto_register(void);
  */
 void game_hooks_ngs_profile_online(void);
 
+/**
+ * Called every frame: once the main menu is up, set up the default Bro (the other Gun Bro, level 1,
+ * base weapons) and put him on duty when no Bro is, as the game would have done at startup.
+ */
+void game_hooks_default_bro(void);
+
 /* Guest code reaches the bridge through `svc GAME_HOOK_SVC_BASE + n` (see game_hooks_install). */
 #define GAME_HOOK_SVC_BASE  0x3000u
 #define GAME_HOOK_SVC_COUNT 0x10u
