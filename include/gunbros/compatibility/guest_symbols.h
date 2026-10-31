@@ -276,7 +276,9 @@
 #define GUEST_FN_SHOW_MESSAGE_POPUP          0x0025fcc0u  /* CAndroidMessagePopup::ShowAndroidMessagePopup(type, title, text, a..e) */
 #define GUEST_FN_MESSAGE_POPUP_REFRESH       0x0025f6e8u  /* CAndroidMessagePopup::RefreshMidMenuPopup(popup, MenuAction) */
 #define GUEST_OFF_SEARCH_POPUP_FIELD         0xf8u        /* CAndroidSearchPopup -> CAndroidUiTextField* */
+#define GUEST_OFF_SEARCH_POPUP_BUTTON_B      0x150u       /* CAndroidSearchPopup -> second CMenuMovieButton */
 #define GUEST_OFF_SEARCH_POPUP_BUTTON_C      0x1a4u       /* CAndroidSearchPopup -> third CMenuMovieButton */
+#define GUEST_OFF_SEARCH_POPUP_BUTTON_D      0x1f8u       /* CAndroidSearchPopup -> fourth CMenuMovieButton */
 #define GUEST_ADDR_SEARCH_POPUP_BUTTON_C_Y   0x002602f8u  /* ButtonCCallback: ldrsh r2, [rect, #4] (y); ldrsh r1, [rect] */
 #define GUEST_ADDR_SEARCH_POPUP_FIELD_BOUNDS 0x00260378u  /* SearchFieldCallback: str ip, [sp]; bl SetBounds(x, y, w, h) */
 #define GUEST_ADDR_SEARCH_POPUP_FIELD_RET    0x00260380u  /* SearchFieldCallback, after that call */
@@ -296,6 +298,8 @@
 #define GUEST_POPUP_BUTTON_COPY              2u           /* "Go", relabelled "Copy" */
 #define GUEST_POPUP_ACTION_COPY              0xaau
 #define GUEST_POPUP_BUTTON_OK                8u
+#define GUEST_POPUP_BUTTON_NAME              4u           /* "Retry", relabelled "Name" */
+#define GUEST_POPUP_ACTION_NAME              0xacu
 #define GUEST_POPUP_ACTION_CANCEL            0xa8u
 #define GUEST_POPUP_ACTION_ADD_BUDDY         0xadu
 #define GUEST_SEARCH_POPUP_ACTION_CLOSE      0xa9u        /* search popup: just hides it */

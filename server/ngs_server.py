@@ -98,6 +98,11 @@ class Accounts:
             self._save()
             return other, None
 
+    def set_name(self, user, name):
+        with self.lock:
+            user['name'] = name
+            self._save()
+
     def unfriend(self, user, other_id):
         """End the friendship between `user` and player `other_id`. Returns an error or None."""
         with self.lock:
@@ -136,7 +141,7 @@ class Accounts:
             self.data['next_message_id'] = self.data.get('next_message_id', 1) + 1
             self.data['messages'].append({
                 'id': self.data['next_message_id'] - 1, 'senderid': sender['id'],
-                'senderGamertag': sender['gamertag'], 'recipientid': recipient_id, 'type': msg_type,
+                'senderGamertag': display_name(sender), 'recipientid': recipient_id, 'type': msg_type,
                 'message': text, 'expires': expires})
             self._save()
             return True
@@ -241,11 +246,31 @@ class Accounts:
             return None
 
 
+# A player's name as their Bros see it (the game shows the "nickname"): one they chose, else the
+# account's generated gamertag. The gamertag itself stays: it is the login name.
+NAME_MAX = 12
+NAME_CHARS = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -_.')
+
+
+def display_name(user):
+    return user.get('name') or user['gamertag']
+
+
+def clean_name(name):
+    """A name as players may set it, or None: 2-12 letters, digits, spaces, '-', '_', '.'."""
+    if not isinstance(name, str):
+        return None
+    name = ' '.join(name.split())
+    if not 2 <= len(name) <= NAME_MAX or not set(name) <= NAME_CHARS or not any(c.isalnum() for c in name):
+        return None
+    return name
+
+
 def credentials(user):
     # Fields read by CNGSUserCredentials::InitFromObjectRepresentation.
     return {'id': user['id'], 'clientid': user['id'], 'gamertag': user['gamertag'],
             # avatarid > 0: CNGSUserCredentials::hasValidAvatar, required for friends-list entries
-            'nickname': user['gamertag'], 'email': user['email'], 'avatarid': user['id'],
+            'nickname': display_name(user), 'email': user['email'], 'avatarid': user['id'],
             'socialnetworkname': 'glu', 'socialnetworkid': user['email'],
             'gluid': user['email'], 'gluAlias': user['gamertag']}
 
@@ -481,7 +506,20 @@ def ext_player(body):
 
 def ext_friendcode(body):
     user = ext_player(body)
-    return {'ok': True, 'code': user['code'], 'gamertag': user['gamertag']} if user else {'ok': False, 'error': 'Not signed in.'}
+    if user is None:
+        return {'ok': False, 'error': 'Not signed in.'}
+    return {'ok': True, 'code': user['code'], 'gamertag': user['gamertag'], 'name': display_name(user)}
+
+
+def ext_setname(body):
+    user = ext_player(body)
+    if user is None:
+        return {'ok': False, 'error': 'Not signed in.'}
+    name = clean_name(body.get('name'))
+    if name is None:
+        return {'ok': False, 'error': f'2-{NAME_MAX} letters or digits.'}
+    ACCOUNTS.set_name(user, name)
+    return {'ok': True, 'name': name}
 
 
 def ext_addfriend(body):
@@ -509,6 +547,7 @@ def ext_ping(body):
 
 # Endpoints used by the bridge itself: plain JSON in, plain JSON out.
 EXT_HANDLERS = {'/gunbros/friendcode': ext_friendcode, '/gunbros/addfriend': ext_addfriend,
+                '/gunbros/setname': ext_setname,
                 '/gunbros/unfriend': ext_unfriend, '/gunbros/ping': ext_ping}
 ADMIN_TOKEN = None
 
@@ -623,7 +662,8 @@ def cli(args):
     if args.command == 'accounts':
         accounts = Accounts(os.path.join(args.data_dir, 'accounts.json'))
         for u in sorted(accounts.data['users'].values(), key=lambda u: u['id']):
-            print(f"{u['id']:>6}  {u['code']}  {u['gamertag']:<20} friends={u.get('friends', [])}")
+            print(f"{u['id']:>6}  {u['code']}  {u['gamertag']:<20} {u.get('name', ''):<{NAME_MAX}}  "
+                  f"friends={u.get('friends', [])}")
     elif args.command in ('befriend', 'unfriend'):
         import urllib.request
         if len(args.params) != 2:

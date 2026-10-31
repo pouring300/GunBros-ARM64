@@ -115,7 +115,13 @@ In the game, the "Invite more friends" banner on the Bros tab opens "Add a Bro" 
 the OpenSpy mod's popups): the title shows the player's own code, and entering a friend's code adds
 them; Brotherhood reloads its list right away. The bridge uses
 two endpoints outside Glu's API, authenticated with the player's NGS session id:
-`PUT /gunbros/friendcode {"session": "..."}` and `PUT /gunbros/addfriend {"session": "...", "code": "XXXX-XXXX"}`.
+`PUT /gunbros/friendcode {"session": "..."}` (the player's code and name) and
+`PUT /gunbros/addfriend {"session": "...", "code": "XXXX-XXXX"}`.
+
+The popup's "Name" button sets the name a player's Bros see (Brotherhood, Bro-Ops recruits and
+requests): `PUT /gunbros/setname {"session": "...", "name": "..."}`, 2-12 letters, digits, spaces,
+`-`, `_` or `.`. The game shows it as the player's nickname; until one is set, that is the account's
+generated gamertag.
 
 Admin commands:
 

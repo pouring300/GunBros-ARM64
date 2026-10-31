@@ -546,6 +546,9 @@ enum {
     ADD_BRO_COPY,           /* "Copy" pressed: copy the code and show the popup again */
     ADD_BRO_SUBMITTED,      /* friend code entered */
     ADD_BRO_ADDING,         /* asking the server to add the friend */
+    ADD_BRO_NAME,           /* "Name" pressed: show the popup for the player's name */
+    ADD_BRO_NAME_SUBMITTED, /* name entered */
+    ADD_BRO_NAMING,         /* asking the server to set the name */
 };
 
 #define HOOK_TRAMPOLINES_OFF 0xf000u   /* in the stubs region, i.e. guest 0x8000f000 */
@@ -557,6 +560,8 @@ static bool s_add_bro_hint_set = false; /* its text field shows the "enter a cod
 static uint32_t s_add_bro_message = 0;  /* our CAndroidMessagePopup while it is shown */
 static char s_add_bro_code[32];
 static char s_own_code[32];             /* the player's own friend code, once fetched */
+static char s_own_name[32];             /* the name the player's Bros see, once fetched */
+static bool s_name_mode = false;        /* the popup asks for the player's name, not a code */
 
 /* Hook a guest function that starts with `push {...}; ldr r4, [pc, #imm]` and takes
    (r0 = object, r1 = action): the bridge sees the call first (svc) and returns the action to
@@ -701,11 +706,15 @@ void game_hooks_on_svc(uint32_t idx) {
             read_text_field(field, s_add_bro_code, sizeof(s_add_bro_code));
             s_add_bro_popup = 0;
             set_add_bro_layout(false);
+            bool entered = action == GUEST_POPUP_ACTION_ADD_BUDDY && s_add_bro_code[0];
             if (action == GUEST_POPUP_ACTION_COPY) {
                 s_add_bro_state = ADD_BRO_COPY;
+            } else if (action == GUEST_POPUP_ACTION_NAME) {
+                s_add_bro_state = ADD_BRO_NAME;
+            } else if (s_name_mode) {
+                s_add_bro_state = entered ? ADD_BRO_NAME_SUBMITTED : ADD_BRO_IDLE;
             } else {
-                s_add_bro_state = (action == GUEST_POPUP_ACTION_ADD_BUDDY && s_add_bro_code[0])
-                                  ? ADD_BRO_SUBMITTED : ADD_BRO_IDLE;
+                s_add_bro_state = entered ? ADD_BRO_SUBMITTED : ADD_BRO_IDLE;
             }
             action = GUEST_SEARCH_POPUP_ACTION_CLOSE;  /* not an OpenSpy search */
         }
@@ -752,29 +761,39 @@ static uint32_t current_mid_popup(void) {
     return popup;
 }
 
-static void show_add_bro_popup(const char *title) {
-    const uint32_t args[] = { guest_cstrwchar(title), GUEST_POPUP_BUTTON_CANCEL,
-                              GUEST_POPUP_BUTTON_ADD_BUDDY, GUEST_POPUP_BUTTON_COPY, (uint32_t)-1 };
+/* No popup button label says what we need: give a button a label of our own. A button's label is
+   a CStrWChar it owns (+0x3c); give it one allocated by the game (np_malloc), as
+   CMenuMovieButton::SetLabel would, so the game can free it. The old one is left alone. */
+static void relabel_popup_button(uint32_t button, const char *text) {
+    prepare_call_arm(0x10);
+    run_guest(GUEST_FN_NP_MALLOC, "np_malloc");
+    uint32_t label = dynarmic_backend_get_reg(0);
+    if (label == 0) return;
+    uint32_t words[4] = { GUEST_VTABLE_CSTRWCHAR, GUEST_CSTRWCHAR_MAGIC, 0, 0 };
+    guest_mem_write(label, words, sizeof(words));
+    prepare_call_arm(label);
+    dynarmic_backend_set_reg(1, guest_str(text));
+    run_guest(GUEST_FN_CSTRWCHAR_CONCATENATE_CHAR, "cstrwchar");
+    guest_mem_write(button + GUEST_OFF_MENU_BUTTON_LABEL, &label, 4);
+}
+
+/* The Add a Bro popup: the player's code, Copy, a friend's code, Name, Cancel / Add. With
+   `name_mode`, the same popup asks for the player's name instead: Cancel / Save. */
+static void show_add_bro_popup(const char *title, bool name_mode) {
+    const uint32_t none = (uint32_t)-1;
+    const uint32_t args[] = { guest_cstrwchar(title), GUEST_POPUP_BUTTON_CANCEL, GUEST_POPUP_BUTTON_ADD_BUDDY,
+                              name_mode ? none : GUEST_POPUP_BUTTON_COPY, name_mode ? none : GUEST_POPUP_BUTTON_NAME };
     set_add_bro_layout(true);
     call_guest_args(GUEST_FN_SHOW_SEARCH_POPUP, "add_bro_popup", args, 5);
     s_add_bro_popup = current_mid_popup();
     s_add_bro_hint_set = false;
-    if (s_add_bro_popup) {
-        /* No popup button label says "Copy": relabel the third one. A button's label is a
-           CStrWChar it owns (+0x3c); give it one allocated by the game (np_malloc), as
-           CMenuMovieButton::SetLabel would, so the game can free it. The old one is left alone. */
-        prepare_call_arm(0x10);
-        run_guest(GUEST_FN_NP_MALLOC, "np_malloc");
-        uint32_t label = dynarmic_backend_get_reg(0);
-        if (label) {
-            uint32_t words[4] = { GUEST_VTABLE_CSTRWCHAR, GUEST_CSTRWCHAR_MAGIC, 0, 0 };
-            guest_mem_write(label, words, sizeof(words));
-            prepare_call_arm(label);
-            dynarmic_backend_set_reg(1, guest_str("Copy"));
-            run_guest(GUEST_FN_CSTRWCHAR_CONCATENATE_CHAR, "cstrwchar");
-            guest_mem_write(s_add_bro_popup + GUEST_OFF_SEARCH_POPUP_BUTTON_C + GUEST_OFF_MENU_BUTTON_LABEL,
-                            &label, 4);
-        }
+    s_name_mode = name_mode;
+    if (s_add_bro_popup == 0) return;
+    if (name_mode) {
+        relabel_popup_button(s_add_bro_popup + GUEST_OFF_SEARCH_POPUP_BUTTON_B, "Save");
+    } else {
+        relabel_popup_button(s_add_bro_popup + GUEST_OFF_SEARCH_POPUP_BUTTON_C, "Copy");
+        relabel_popup_button(s_add_bro_popup + GUEST_OFF_SEARCH_POPUP_BUTTON_D, "Name");
     }
 }
 
@@ -904,8 +923,12 @@ void game_hooks_add_bro(void) {
             /* The popup's title is the only label it has (one line, no wrapping), so the field's
                hint explains what to type. */
             snprintf(s_own_code, sizeof(s_own_code), "%s", code);
+            if (!ngs_ext_json_string(reply, "name", s_own_name, sizeof(s_own_name)) &&
+                !ngs_ext_json_string(reply, "gamertag", s_own_name, sizeof(s_own_name))) {
+                s_own_name[0] = '\0';
+            }
             snprintf(text, sizeof(text), "Your friend code: %s", code);
-            show_add_bro_popup(text);
+            show_add_bro_popup(text, false);
             s_add_bro_state = ADD_BRO_SHOWN;
         } else {
             show_add_bro_message("Add a Bro", "Can't reach the Gun Bros server.");
@@ -919,7 +942,10 @@ void game_hooks_add_bro(void) {
             uint32_t field = 0, handle = 0;
             guest_mem_read(s_add_bro_popup + GUEST_OFF_SEARCH_POPUP_FIELD, &field, 4);
             if (field) guest_mem_read(field + GUEST_OFF_TEXT_FIELD_OBJECT, &handle, 4);
-            if (handle) s_add_bro_hint_set = jni_textbox_set_hint(handle, "Enter a friend's code");
+            if (handle) {
+                s_add_bro_hint_set = jni_textbox_set_hint(handle, s_name_mode ? "Enter a new name"
+                                                                              : "Enter a friend's code");
+            }
         }
         /* Closed some other way (e.g. back key): forget it. */
         if (s_add_bro_popup != 0 && current_mid_popup() != s_add_bro_popup) {
@@ -932,7 +958,7 @@ void game_hooks_add_bro(void) {
     case ADD_BRO_COPY:
         jni_copy_to_clipboard("Gun Bros friend code", s_own_code);
         snprintf(text, sizeof(text), "Copied! Code: %s", s_own_code);
-        show_add_bro_popup(text);
+        show_add_bro_popup(text, false);
         s_add_bro_state = ADD_BRO_SHOWN;
         break;
 
@@ -966,6 +992,43 @@ void game_hooks_add_bro(void) {
             show_add_bro_message("Add a Bro", error);
         } else {
             show_add_bro_message("Add a Bro", "Can't reach the Gun Bros server.");
+        }
+        s_add_bro_state = ADD_BRO_IDLE;
+        break;
+    }
+
+    case ADD_BRO_NAME:
+        /* The name the player's Bros see in Brotherhood and Bro-Ops (the server's default is the
+           account's generated gamertag). */
+        snprintf(text, sizeof(text), "Your name: %s", s_own_name[0] ? s_own_name : "?");
+        show_add_bro_popup(text, true);
+        s_add_bro_state = ADD_BRO_SHOWN;
+        break;
+
+    case ADD_BRO_NAME_SUBMITTED:
+        if (!read_session_id(session, sizeof(session))) {
+            show_add_bro_message("Bro name", "Not signed in.");
+            s_add_bro_state = ADD_BRO_IDLE;
+            break;
+        }
+        for (char *c = s_add_bro_code; *c; c++) {  /* keep the JSON simple; the server checks the rest */
+            if (*c == '"' || *c == '\\' || (unsigned char)*c < 0x20) *c = ' ';
+        }
+        snprintf(body, sizeof(body), "{\"session\": \"%s\", \"name\": \"%s\"}", session, s_add_bro_code);
+        if (ngs_ext_start("/gunbros/setname", body)) s_add_bro_state = ADD_BRO_NAMING;
+        break;
+
+    case ADD_BRO_NAMING: {
+        if (!ngs_ext_poll(reply, sizeof(reply))) break;
+        char name[32], error[96];
+        if (ngs_ext_json_string(reply, "name", name, sizeof(name))) {
+            snprintf(s_own_name, sizeof(s_own_name), "%s", name);
+            snprintf(text, sizeof(text), "Your Bros now see: %s", name);
+            show_add_bro_message("Bro name", text);
+        } else if (ngs_ext_json_string(reply, "error", error, sizeof(error))) {
+            show_add_bro_message("Bro name", error);
+        } else {
+            show_add_bro_message("Bro name", "Can't reach the Gun Bros server.");
         }
         s_add_bro_state = ADD_BRO_IDLE;
         break;
