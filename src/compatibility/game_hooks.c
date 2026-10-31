@@ -14,6 +14,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
+
+static uint64_t monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+}
 
 static uint32_t get_gunbros(void) {
     uint32_t app_ptr = 0, gunbros = 0;
@@ -428,10 +435,11 @@ static void sync_bro_usage(void) {
 
 /* The default Bro stands in when no Bro is on duty: the other Gun Bro, at level 1, with the base
    weapons. The game sets him up in a resource-loader step that runs once the friend list is ready
-   (CFriendDataManager::FriendsManagerInfoLoad, queued by FetchFriendsManagerInfo); the bridge's
-   loader patch (GUEST_PATCH_RESLOADER_LOADNEXT) drops steps that aren't ready on their first try,
-   so it never ran: nobody was on duty, and Brotherhood showed an empty slot (no name, "LEVEL 0")
-   with an all-zero loadout, which the mission partner used too. Do what that step does. */
+   (CFriendDataManager::FriendsManagerInfoLoad, queued by FetchFriendsManagerInfo); a loader patch
+   used to drop steps that weren't ready on their first try (see install_loader_retry), so it
+   never ran: nobody was on duty, and Brotherhood showed an empty slot (no name, "LEVEL 0") with
+   an all-zero loadout, which the mission partner used too. Do what that step does, in case it
+   still doesn't run (e.g. it times out). */
 void game_hooks_default_bro(void) {
     static int s_done = 0, s_menu_frames = 0;
     if (s_done) return;
@@ -536,6 +544,7 @@ enum {
     HOOK_SVC_MENU_ACTION = 0,           /* CMenuAction::DoAction */
     HOOK_SVC_SEARCH_POPUP_ACTION = 1,   /* CAndroidSearchPopup::RefreshMidMenuPopup */
     HOOK_SVC_MESSAGE_POPUP_ACTION = 2,  /* CAndroidMessagePopup::RefreshMidMenuPopup */
+    HOOK_SVC_LOADER_STEP = 3,           /* CResourceLoader::LoadNext: a step isn't ready yet */
 };
 
 enum {
@@ -653,6 +662,58 @@ static void set_add_bro_layout(bool ours) {
     guest_mem_write(LAYOUT_DATA, offsets, sizeof(offsets));
 }
 
+/* CResourceLoader works through a queue of steps, one per frame; a function step that returns 0
+   isn't ready, and the loader tries it again next frame. Some steps wait on Glu's servers, so the
+   game used to hang on its loading screen; a patch then dropped every step that wasn't ready at
+   its first try. That also dropped steps that only need a moment (e.g. the friend list loader,
+   or the one that sets up the default Bro), which broke them quietly. Instead, retry a step for
+   up to LOADER_STEP_TIMEOUT_MS and drop it only then. */
+#define LOADER_STUB_OFF (HOOK_TRAMPOLINES_OFF + 6 * HOOK_TRAMPOLINE_SIZE)
+#define LOADER_STEP_TIMEOUT_MS 10000
+
+static bool install_loader_retry(uint8_t *code_base, uint8_t *stubs_base) {
+    uint32_t *code = (uint32_t *)(code_base + GUEST_ADDR_RESLOADER_STEP_CHECK);
+    /* cmp r0, #0; beq <return> (or the nop the old patch left there) */
+    if (code[0] != 0xe3500000u || (code[1] != 0x0affffc8u && code[1] != 0xe1a00000u)) {
+        LOGE("[HOOK] unexpected CResourceLoader::LoadNext code, loader steps not retried");
+        return false;
+    }
+    const uint32_t stub[] = {
+        0xe3500000u,  /* cmp   r0, #0           step ready? */
+        0x1a000003u,  /* bne   next */
+        0xe1a00004u,  /* mov   r0, r4           the step */
+        0xef000000u | (GAME_HOOK_SVC_BASE + HOOK_SVC_LOADER_STEP),  /* svc: r0 = 1 to drop it */
+        0xe3500000u,  /* cmp   r0, #0 */
+        0x059ff000u,  /* ldreq pc, =return      try again next frame */
+        0xe59ff000u,  /* next: ldr pc, =next step */
+        GUEST_ADDR_RESLOADER_RETURN,
+        GUEST_ADDR_RESLOADER_NEXT_STEP,
+    };
+    memcpy(stubs_base + LOADER_STUB_OFF, stub, sizeof(stub));
+    code[0] = 0xe51ff004u;  /* ldr pc, [pc, #-4] */
+    code[1] = GUEST_STUBS_BASE + LOADER_STUB_OFF;
+    return true;
+}
+
+/* A loader step returned "not ready": 1 to drop it, 0 to try again next frame. */
+static uint32_t loader_step_not_ready(uint32_t step) {
+    static uint32_t s_step = 0, s_fn = 0;
+    static uint64_t s_since_ms = 0;
+    uint32_t fn = 0;
+    guest_mem_read(step + GUEST_OFF_RESLOADER_STEP_FN, &fn, 4);
+    uint64_t now = monotonic_ms();
+    if (step != s_step || fn != s_fn) {
+        s_step = step;
+        s_fn = fn;
+        s_since_ms = now;
+        return 0;
+    }
+    if (now - s_since_ms < LOADER_STEP_TIMEOUT_MS) return 0;
+    LOGW("[HOOK] loader step 0x%08x not ready after %d s, skipping it", fn, LOADER_STEP_TIMEOUT_MS / 1000);
+    s_step = s_fn = 0;
+    return 1;
+}
+
 bool game_hooks_install(uint8_t *code_base, uint8_t *stubs_base) {
     bool ok = hook_action_function(code_base, stubs_base, GUEST_FN_MENU_DO_ACTION,
                                    HOOK_SVC_MENU_ACTION, 0)
@@ -660,7 +721,8 @@ bool game_hooks_install(uint8_t *code_base, uint8_t *stubs_base) {
                                    HOOK_SVC_SEARCH_POPUP_ACTION, 1)
            && hook_action_function(code_base, stubs_base, GUEST_FN_MESSAGE_POPUP_REFRESH,
                                    HOOK_SVC_MESSAGE_POPUP_ACTION, 2)
-           && install_add_bro_layout(code_base, stubs_base);
+           && install_add_bro_layout(code_base, stubs_base)
+           && install_loader_retry(code_base, stubs_base);
     LOGI("[HOOK] menu action hooks %s", ok ? "installed" : "NOT installed");
     return ok;
 }
@@ -718,6 +780,9 @@ void game_hooks_on_svc(uint32_t idx) {
             }
             action = GUEST_SEARCH_POPUP_ACTION_CLOSE;  /* not an OpenSpy search */
         }
+        break;
+    case HOOK_SVC_LOADER_STEP:
+        action = loader_step_not_ready(object);
         break;
     case HOOK_SVC_MESSAGE_POPUP_ACTION:
         if (object != 0 && object == s_add_bro_message) {

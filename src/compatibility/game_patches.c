@@ -6,8 +6,8 @@
 #define GUEST_HELPERS_OFF 0xd000u /* offset in g_host_stubs -> guest 0x8000d000 */
 
 static const game_patch_entry_t s_game_patches[] = {
-    /* CResourceLoader::LoadNext */
-    { GUEST_PATCH_RESLOADER_LOADNEXT,  true, 0x0affffc8, 0xe1a00000, 4, "CResourceLoader::LoadNext nop" },
+    /* CResourceLoader::LoadNext: not-ready steps are retried for a while (game_hooks.c,
+       install_loader_retry) instead of the loader waiting on them forever. */
 
     /* Patch A: CGun::Draw (hooks into Trampoline A) */
     { GUEST_PATCH_GUN_DRAW,            true, 0xe5d030e8, 0xea08eb2a, 4, "CGun::Draw trampoline branch" },

@@ -35,7 +35,7 @@ typedef struct {
 
 | ID | Virtual Address | Original Code | Patched Code | Component / Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| **A** | `GUEST_PATCH_RESLOADER` (`0x00366878`) | `0x0affffc8` (`beq`) | `0xe1a00000` (`nop`) | **Resource Server Bypass**: Prevents an infinite loop in `CResourceLoader::LoadNext` that waited for a response from defunct Glu servers. |
+| **A** | `GUEST_ADDR_RESLOADER_STEP_CHECK` (`0x00366874`) | `cmp r0, #0; beq` | jump to a stub | **Loader step retry**: a `CResourceLoader` step that isn't ready is retried every frame, as in the original game, but for at most 10 s, then skipped (logged). Steps that waited on Glu's servers no longer hang the loading screen, and steps that only need a moment (e.g. a Bro's data from the replacement server) still complete. Installed by `game_hooks.c` (`install_loader_retry`); earlier builds skipped every step that wasn't ready at once. |
 | **B** | `GUEST_PATCH_DUALSTICK` (`0x001fd450`) | Capture pending | Multi-pointer routine | **Dual-Stick Multitouch**: Adapts touch control to handle independent pointers for moving and shooting simultaneously. |
 | **C** | `GUEST_PATCH_SKELETON` (`0x0021be00`) | Capture pending | Range guard | **3D Skeleton Stability**: `CMesh::GetNodeAt` adds a bounds check to prevent segmentation faults from undefined bones. |
 | **D** | `GUEST_PATCH_TIMING` (`0x0021b330`) | Capture pending | Time clamping | **High Refresh Rate Displays (90Hz / 120Hz)**: Prevents division by zero or negative time jumps in `CMesh::GetInterpolationValues`. |
