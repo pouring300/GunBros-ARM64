@@ -669,7 +669,7 @@ static void set_add_bro_layout(bool ours) {
    or the one that sets up the default Bro), which broke them quietly. Instead, retry a step for
    up to LOADER_STEP_TIMEOUT_MS and drop it only then. */
 #define LOADER_STUB_OFF (HOOK_TRAMPOLINES_OFF + 6 * HOOK_TRAMPOLINE_SIZE)
-#define LOADER_STEP_TIMEOUT_MS 10000
+#define LOADER_STEP_TIMEOUT_MS 5000
 
 static bool install_loader_retry(uint8_t *code_base, uint8_t *stubs_base) {
     uint32_t *code = (uint32_t *)(code_base + GUEST_ADDR_RESLOADER_STEP_CHECK);
@@ -695,6 +695,21 @@ static bool install_loader_retry(uint8_t *code_base, uint8_t *stubs_base) {
     return true;
 }
 
+/* A request given up on in loader_step_not_ready, completed between frames (guest code can't be
+   called from inside the hook) by complete_given_up_request. */
+static uint32_t s_given_up_object = 0;
+
+static void complete_given_up_request(void) {
+    uint32_t object = s_given_up_object, pending = 0;
+    if (object == 0) return;
+    s_given_up_object = 0;
+    guest_mem_read(object + GUEST_OFF_SERVER_OBJECT_PENDING, &pending, 4);
+    for (uint32_t i = 0; i < pending && i < 8; i++) {
+        prepare_call_arm(object);
+        run_guest(GUEST_FN_SERVER_OBJECT_COMPLETE_READ, "loader_give_up");
+    }
+}
+
 /* A loader step returned "not ready": 1 to drop it, 0 to try again next frame. */
 static uint32_t loader_step_not_ready(uint32_t step) {
     static uint32_t s_step = 0, s_fn = 0;
@@ -709,8 +724,21 @@ static uint32_t loader_step_not_ready(uint32_t step) {
         return 0;
     }
     if (now - s_since_ms < LOADER_STEP_TIMEOUT_MS) return 0;
-    LOGW("[HOOK] loader step 0x%08x not ready after %d s, skipping it", fn, LOADER_STEP_TIMEOUT_MS / 1000);
     s_step = s_fn = 0;
+    /* A Bro's data (or the friend fetch) whose request failed is never finished, and Brotherhood
+       stays busy (ignoring taps) without its list. Close the request the game's own way, so the
+       step completes without that data, as it would after a server error. */
+    uint32_t arg = 0, object = 0, pending = 0;
+    guest_mem_read(step + GUEST_OFF_RESLOADER_STEP_ARG, &arg, 4);
+    if (fn == GUEST_FN_FRIEND_DATA_LOADER_STEP) object = arg;
+    else if (fn == GUEST_FN_FRIEND_LIST_LOADER_STEP && arg) guest_mem_read(arg + GUEST_OFF_FRIEND_MGR_FETCH_LIST, &object, 4);
+    if (object) guest_mem_read(object + GUEST_OFF_SERVER_OBJECT_PENDING, &pending, 4);
+    if (pending > 0) {
+        LOGW("[HOOK] loader step 0x%08x: no reply after %d s, going on without it", fn, LOADER_STEP_TIMEOUT_MS / 1000);
+        s_given_up_object = object;
+        return 0;  /* ready once that's done */
+    }
+    LOGW("[HOOK] loader step 0x%08x not ready after %d s, skipping it", fn, LOADER_STEP_TIMEOUT_MS / 1000);
     return 1;
 }
 
@@ -967,6 +995,7 @@ static void sync_challenges_menu(void) {
 void game_hooks_add_bro(void) {
     char session[64], body[160], reply[NGS_EXT_REPLY_MAX], text[128];
 
+    complete_given_up_request();
     sync_friends_menu();
     sync_challenges_menu();
 

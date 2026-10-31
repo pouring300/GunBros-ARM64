@@ -581,6 +581,11 @@ REGISTRATIONS = RateLimiter(REGISTRATIONS_PER_HOUR, 3600)
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'GunBrosNGS/0.1'
+    # Keep connections open (HTTP/1.1, every reply has a Content-Length): a hosting platform's
+    # front end may reuse a connection the server would otherwise close after each reply, and
+    # answer 502 when it races with that close. Idle connections are dropped after a minute.
+    protocol_version = 'HTTP/1.1'
+    timeout = 60
 
     def _client(self):
         # Behind a reverse proxy or a hosting platform's front end, the client is the first forwarded address.
@@ -601,6 +606,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             length = -1
         if length < 0 or length > MAX_BODY:
+            self.close_connection = True  # the body wasn't read
             self._reply(413)
             return
         raw = self.rfile.read(length) if length else b''

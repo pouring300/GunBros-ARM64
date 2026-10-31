@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
@@ -151,7 +153,15 @@ typedef struct {
     bool active;        /* connected to the NGS server */
     uint8_t *pending;   /* rewritten bytes not yet accepted by the socket */
     size_t pending_len;
+    struct sockaddr_in addr;  /* where it is connected, for a retry */
+    uint8_t *request;   /* the request sent on it (as rewritten), for a retry */
+    size_t request_len;
+    bool replied;       /* the reply's status line has been seen */
+    int retries;
 } ngs_socket_t;
+
+#define NGS_MAX_RETRIES 2
+#define NGS_RETRY_TIMEOUT_MS 3000
 
 static ngs_socket_t s_ngs_sockets[NGS_MAX_FDS];
 
@@ -167,7 +177,83 @@ static ngs_socket_t *ngs_socket(int fd) {
 static void ngs_socket_reset(int fd) {
     if (fd < 0 || fd >= NGS_MAX_FDS) return;
     free(s_ngs_sockets[fd].pending);
+    free(s_ngs_sockets[fd].request);
     memset(&s_ngs_sockets[fd], 0, sizeof(s_ngs_sockets[fd]));
+}
+
+/* Remember what was sent, to send it again if the server's front end fails (ngs_retry). */
+static void ngs_record(ngs_socket_t *s, const uint8_t *data, size_t len) {
+    if (s->replied) {  /* a new request on the same connection */
+        s->request_len = 0;
+        s->replied = false;
+        s->retries = 0;
+    }
+    uint8_t *grown = realloc(s->request, s->request_len + len);
+    if (!grown) return;
+    memcpy(grown + s->request_len, data, len);
+    s->request = grown;
+    s->request_len += len;
+}
+
+/* Wait until `fd` is ready for `events`, up to `ms`. */
+static bool ngs_wait(int fd, short events, int ms) {
+    struct pollfd p = { fd, events, 0 };
+    return poll(&p, 1, ms) == 1 && (p.revents & events);
+}
+
+/* The game never finishes a request whose reply is an error from the hosting platform's front
+   end (502/503/504) or that the connection drops before replying: the screen waiting for it
+   stays busy. Connect again on the same descriptor and send the request again instead. */
+static bool ngs_retry(int fd, ngs_socket_t *s) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    int nfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (nfd < 0) return false;
+    fcntl(nfd, F_SETFL, O_NONBLOCK);
+    bool ok = connect(nfd, (struct sockaddr *)&s->addr, sizeof(s->addr)) == 0 ||
+              (errno == EINPROGRESS && ngs_wait(nfd, POLLOUT, NGS_RETRY_TIMEOUT_MS));
+    int err = 0;
+    socklen_t el = sizeof(err);
+    if (ok && (getsockopt(nfd, SOL_SOCKET, SO_ERROR, &err, &el) != 0 || err != 0)) ok = false;
+    for (size_t sent = 0; ok && sent < s->request_len;) {
+        ssize_t n = send(nfd, s->request + sent, s->request_len - sent, 0);
+        if (n > 0) sent += (size_t)n;
+        else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) ok = ngs_wait(nfd, POLLOUT, NGS_RETRY_TIMEOUT_MS);
+        else ok = false;
+    }
+    if (!ok || flags < 0 || fcntl(nfd, F_SETFL, flags) != 0 || dup2(nfd, fd) < 0) {
+        close(nfd);
+        return false;
+    }
+    close(nfd);
+    s->retries++;
+    return true;
+}
+
+/* Before the game reads a reply: on a front-end error or a dropped connection, send the request
+   again (at most NGS_MAX_RETRIES times). Returns true if the game should try reading later. */
+static bool ngs_check_reply(int fd, ngs_socket_t *s) {
+    if (s->replied || s->request_len == 0) return false;
+    char head[16];
+    ssize_t n = recv(fd, head, sizeof(head), MSG_PEEK | MSG_DONTWAIT);
+    bool failed;
+    if (n >= 12) {
+        failed = memcmp(head, "HTTP/1.", 7) == 0 && head[9] == '5' && head[10] == '0' &&
+                 (head[11] == '2' || head[11] == '3' || head[11] == '4');
+    } else if (n > 0) {
+        return true;  /* wait for the whole status line */
+    } else {
+        failed = n == 0 || errno == ECONNRESET || errno == EPIPE;
+    }
+    if (!failed) {
+        if (n >= 12) s->replied = true;
+        return false;
+    }
+    if (s->retries < NGS_MAX_RETRIES && ngs_retry(fd, s)) {
+        LOGW("[NGS] %s, sending the request again", n >= 12 ? "server front end answered 5xx" : "connection dropped");
+        return true;
+    }
+    s->replied = true;  /* give up: let the game see it */
+    return false;
 }
 
 /* Send what's left of a rewritten request. Returns false if some is still pending. */
@@ -298,7 +384,10 @@ static void h_connect(hle_t *c) {
             redirected = *sin;
             redirected.sin_port = htons(ngs_config_port());
             addr = (const struct sockaddr*)&redirected;
-            if (fd >= 0 && fd < NGS_MAX_FDS) s_ngs_sockets[fd].active = true;
+            if (fd >= 0 && fd < NGS_MAX_FDS) {
+                s_ngs_sockets[fd].active = true;
+                s_ngs_sockets[fd].addr = redirected;
+            }
         }
     }
     int ret = connect(fd, addr, len);
@@ -377,6 +466,7 @@ static void h_send(hle_t *c) {
            before anything else on this connection (here or in recv). */
         ret = send(fd, rewritten, rewritten_len, flags);
         if (ret >= 0) {
+            ngs_record(ngs, rewritten, rewritten_len);
             free(ngs->pending);
             ngs->pending = rewritten;
             ngs->pending_len = rewritten_len;
@@ -388,6 +478,7 @@ static void h_send(hle_t *c) {
         }
     } else {
         ret = send(fd, buf, len, flags);
+        if (ngs && ret > 0) ngs_record(ngs, buf, (size_t)ret);
     }
     if (ret < 0) {
         set_guest_errno(errno);
@@ -416,7 +507,7 @@ static void h_recv(hle_t *c) {
         return;
     }
     ngs_socket_t *ngs = ngs_socket(fd);
-    if (ngs && !ngs_flush(fd, ngs)) {
+    if (ngs && (!ngs_flush(fd, ngs) || ngs_check_reply(fd, ngs))) {
         set_guest_errno(EAGAIN);
         c->r0 = (uint32_t)-1;
         return;

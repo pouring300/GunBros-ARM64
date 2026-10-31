@@ -120,6 +120,9 @@
 #define GUEST_ADDR_RESLOADER_RETURN       0x003667a0u /* CResourceLoader::LoadNext: return (the step stays queued) */
 #define GUEST_ADDR_RESLOADER_NEXT_STEP    0x00366838u /* CResourceLoader::LoadNext: move on to the next step */
 #define GUEST_OFF_RESLOADER_STEP_FN       0x08u       /* loader step: function (r0 = arg at +0x10, r1 = +0x0c) */
+#define GUEST_OFF_RESLOADER_STEP_ARG      0x10u       /* loader step: the function's first argument */
+#define GUEST_FN_FRIEND_DATA_LOADER_STEP  0x002a6b40u /* CFriendData::ResourceLoaderCallback(friend): ready when the Bro's reads are done */
+#define GUEST_FN_FRIEND_LIST_LOADER_STEP  0x002aac88u /* CFriendDataManager::FriendListFetchLoader(mgr): ready when mgr+0xb4's reads are done */
 
 #define GUEST_PATCH_TRAMPOLINE_A          0x004f0000u
 #define GUEST_PATCH_GUN_DRAW              0x002b5350u
